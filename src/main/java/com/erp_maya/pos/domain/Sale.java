@@ -72,6 +72,10 @@ public class Sale {
     @Column(name = "discount_percent", nullable = false)
     private BigDecimal discountPercent = BigDecimal.ZERO;
 
+    /** La autorización que permitió el descuento manual, si hizo falta. */
+    @Column(name = "authorization_id")
+    private Long authorizationId;
+
     private String status = "paid";
 
     @OneToMany(mappedBy = "sale", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -108,6 +112,9 @@ public class Sale {
 
     public User getUser() { return user; }
     public void setUser(User user) { this.user = user; }
+
+    public Long getAuthorizationId() { return authorizationId; }
+    public void setAuthorizationId(Long authorizationId) { this.authorizationId = authorizationId; }
 
     public BigDecimal getDiscountTotal() { return discountTotal; }
     public void setDiscountTotal(BigDecimal discountTotal) { this.discountTotal = discountTotal; }
