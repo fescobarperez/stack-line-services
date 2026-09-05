@@ -58,4 +58,9 @@
     <!-- Descuentos con origen: base para el módulo de autorizaciones -->
     <include file="changes/034_sale_discounts.sql" relativeToChangelogFile="true"/>
 
+    <!-- Autorizaciones · capa 1: jerarquía, alcance y moneda base -->
+    <include file="changes/035_org_currency.sql" relativeToChangelogFile="true"/>
+    <include file="changes/036_authorizations.sql" relativeToChangelogFile="true"/>
+    <include file="changes/037_sale_authorization.sql" relativeToChangelogFile="true"/>
+
 </databaseChangeLog>

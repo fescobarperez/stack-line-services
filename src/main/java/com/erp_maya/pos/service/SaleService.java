@@ -137,6 +137,7 @@ public class SaleService {
 
         // Descuento manual sobre el total, aparte de los de línea.
         BigDecimal headerDiscount = req.discountTotal() != null ? req.discountTotal() : BigDecimal.ZERO;
+        sale.setAuthorizationId(req.authorizationId());
         if (headerDiscount.signum() > 0) {
             if (headerDiscount.compareTo(total) > 0) {
                 throw new IllegalStateException("El descuento no puede superar el total de la venta");

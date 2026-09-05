@@ -48,6 +48,14 @@ public class User {
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
+    /** Jefe directo. Define el árbol; la raíz lo tiene nulo. */
+    @Column(name = "manager_id")
+    private Long managerId;
+
+    /** Nivel de autoridad. Nulo = operativo, no aprueba nada. */
+    @Column(name = "auth_level_id")
+    private Long authLevelId;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -55,6 +63,11 @@ public class User {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    public Long getManagerId() { return managerId; }
+    public void setManagerId(Long managerId) { this.managerId = managerId; }
+    public Long getAuthLevelId() { return authLevelId; }
+    public void setAuthLevelId(Long authLevelId) { this.authLevelId = authLevelId; }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

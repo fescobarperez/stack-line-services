@@ -21,7 +21,7 @@ public final class SaleDtos {
     @Serdeable
     public record Request(String docNumber, Long clientId, @NotNull Long branchId, Long userId,
                           @NotNull Long cashRegisterId, String paymentMethod, String status,
-                          BigDecimal discountTotal,
+                          BigDecimal discountTotal, Long authorizationId,
                           @NotEmpty @Valid List<ItemRequest> items) {}
 
     @Serdeable
