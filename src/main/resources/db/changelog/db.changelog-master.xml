@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.29.xsd">
+
+    <!--
+      Stackline — esquema base multi-empresa (24 tablas del núcleo).
+      Los archivos se incluyen en orden de dependencias (prefijo numérico).
+      Cada tabla operativa lleva company_id (aislamiento por inquilino).
+      Motor: PostgreSQL. Convención de PK: BIGINT GENERATED ALWAYS AS IDENTITY.
+    -->
+    <include file="changes/001_core.sql" relativeToChangelogFile="true"/>
+    <include file="changes/002_masters.sql" relativeToChangelogFile="true"/>
+    <include file="changes/003_inventory.sql" relativeToChangelogFile="true"/>
+    <include file="changes/004_pos.sql" relativeToChangelogFile="true"/>
+    <include file="changes/005_purchases.sql" relativeToChangelogFile="true"/>
+    <include file="changes/006_transfers.sql" relativeToChangelogFile="true"/>
+    <include file="changes/007_receivables.sql" relativeToChangelogFile="true"/>
+    <include file="changes/008_accounting.sql" relativeToChangelogFile="true"/>
+    <include file="changes/009_marketing.sql" relativeToChangelogFile="true"/>
+
+    <!-- Wave 2: módulos operativos/fiscales que extienden el núcleo (15 tablas) -->
+    <include file="changes/010_fel.sql" relativeToChangelogFile="true"/>
+    <include file="changes/011_payables.sql" relativeToChangelogFile="true"/>
+    <include file="changes/012_returns.sql" relativeToChangelogFile="true"/>
+    <include file="changes/013_quotes.sql" relativeToChangelogFile="true"/>
+    <include file="changes/014_stock_count.sql" relativeToChangelogFile="true"/>
+    <include file="changes/015_uom.sql" relativeToChangelogFile="true"/>
+    <include file="changes/016_variants.sql" relativeToChangelogFile="true"/>
+    <include file="changes/017_cost_centers.sql" relativeToChangelogFile="true"/>
+    <include file="changes/018_audit.sql" relativeToChangelogFile="true"/>
+    <include file="changes/019_settings.sql" relativeToChangelogFile="true"/>
+
+    <!-- Wave 3: subsistemas financieros/RH (12 tablas) -->
+    <include file="changes/020_payroll.sql" relativeToChangelogFile="true"/>
+    <include file="changes/021_fixed_assets.sql" relativeToChangelogFile="true"/>
+    <include file="changes/022_loyalty.sql" relativeToChangelogFile="true"/>
+    <include file="changes/023_banks.sql" relativeToChangelogFile="true"/>
+    <include file="changes/024_budgets.sql" relativeToChangelogFile="true"/>
+
+    <!-- Autenticación: código de login por empresa (tenant) -->
+    <include file="changes/025_auth.sql" relativeToChangelogFile="true"/>
+
+    <!-- Wave 2/3 — extensiones para cablear el frontend completo -->
+    <include file="changes/026_quotes_ext.sql" relativeToChangelogFile="true"/>
+    <include file="changes/027_returns_ext.sql" relativeToChangelogFile="true"/>
+    <include file="changes/028_stockcount_ext.sql" relativeToChangelogFile="true"/>
+    <include file="changes/029_budget_ext.sql" relativeToChangelogFile="true"/>
+    <include file="changes/030_variants_ext.sql" relativeToChangelogFile="true"/>
+    <include file="changes/031_promotions_ext.sql" relativeToChangelogFile="true"/>
+    <include file="changes/032_asset_disposal.sql" relativeToChangelogFile="true"/>
+
+    <!-- Control de turno de caja -->
+    <include file="changes/033_cash_points.sql" relativeToChangelogFile="true"/>
+
+    <!-- Descuentos con origen: base para el módulo de autorizaciones -->
+    <include file="changes/034_sale_discounts.sql" relativeToChangelogFile="true"/>
+
+</databaseChangeLog>

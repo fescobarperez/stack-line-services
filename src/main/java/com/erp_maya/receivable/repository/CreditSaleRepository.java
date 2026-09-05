@@ -1,0 +1,22 @@
+package com.erp_maya.receivable.repository;
+
+import com.erp_maya.pos.domain.Sale;
+import io.micronaut.data.annotation.Query;
+import io.micronaut.data.annotation.Repository;
+import io.micronaut.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+/** Ventas a crédito, base de las cuentas por cobrar (aging). */
+@Repository
+public interface CreditSaleRepository extends JpaRepository<Sale, Long> {
+
+    /**
+     * [ saleId, docNumber, clientId, clientName, saleDate, total, paymentTerms ] de las ventas a
+     * crédito (método de pago que contiene "cred"), ordenadas por fecha.
+     */
+    @Query("SELECT s.id, s.docNumber, s.client.id, s.client.name, s.saleDate, s.total, s.client.paymentTerms "
+            + "FROM Sale s WHERE s.companyId = :companyId AND s.client IS NOT NULL "
+            + "AND LOWER(s.paymentMethod) LIKE '%cred%' ORDER BY s.saleDate")
+    List<Object[]> creditSales(Long companyId);
+}
