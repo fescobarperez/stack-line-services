@@ -9,7 +9,11 @@
 name: stackline
 
 services:
+  # Postgres en contenedor. Con RDS configurado NO se levanta: queda tras un
+  # perfil para poder volver a él si hace falta, sin borrar el volumen.
+  #   docker compose --profile local-db up -d
   db:
+    profiles: ["local-db"]
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -38,12 +42,11 @@ services:
       # `dockerfile` y rompe la configuración de build.gradle.kts.
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy   # Liquibase corre al arrancar: sin esto
-                                     # el backend muere en el primer intento
+    # Sin depends_on de db: la base es RDS, que vive fuera de este compose.
     environment:
-      DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-erp_maya}
+      # DB_HOST apunta a RDS. Para volver al contenedor: DB_HOST=db y
+      # levantar con --profile local-db.
+      DB_URL: jdbc:postgresql://${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-erp_maya}
       DB_USER: ${DB_USER:-erp_maya}
       DB_PASSWORD: ${DB_PASSWORD:?}
       JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET en .env}
