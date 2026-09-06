@@ -29,7 +29,10 @@ services:
   backend:
     build:
       context: ..
-      dockerfile: Dockerfile
+      # En deploy/ y no en la raíz: el plugin de Micronaut, si encuentra un
+      # Dockerfile en la raíz del proyecto, cambia el tipo de su tarea
+      # `dockerfile` y rompe la configuración de build.gradle.kts.
+      dockerfile: deploy/Dockerfile
     restart: unless-stopped
     depends_on:
       db:
