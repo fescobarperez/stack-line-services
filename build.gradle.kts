@@ -87,32 +87,6 @@ micronaut {
 
 }
 
-// Correr en la máquina propia usa el mismo ambiente que el servidor: `dev`.
-// Hay una sola base y un solo ambiente, así que un perfil aparte para el
-// escritorio solo sería otra cosa que mantener sincronizada.
-//
-// Lo único que no puede ir al repositorio es la contraseña, así que se lee
-// de un .env en la raíz —ignorado por git— y se pasa como variable de
-// entorno. En el servidor esa misma variable la pone el compose.
-tasks.named<JavaExec>("run") {
-    environment("MICRONAUT_ENVIRONMENTS", System.getenv("MICRONAUT_ENVIRONMENTS") ?: "dev")
-
-    val envFile = rootProject.file(".env")
-    if (envFile.exists()) {
-        envFile.readLines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") && it.contains("=") }
-            .forEach { linea ->
-                val (clave, valor) = linea.split("=", limit = 2)
-                // Lo que ya venga del entorno gana: permite sobreescribir
-                // puntualmente sin editar el archivo.
-                if (System.getenv(clave.trim()) == null) {
-                    environment(clave.trim(), valor.trim())
-                }
-            }
-    }
-}
-
 tasks.named<io.micronaut.gradle.docker.MicronautDockerfile>("dockerfile") {
 
     baseImage = "eclipse-temurin:25-jre"
