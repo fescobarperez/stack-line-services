@@ -18,4 +18,4 @@ out/
 deploy/.env
 
 # Configuración local con secretos: nunca al repositorio.
-src/main/resources/application-local.properties
+/.env
