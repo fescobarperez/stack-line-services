@@ -92,6 +92,51 @@ puede validarlo y Caddy saca el certificado solo. Después: `docker compose up -
 
 ---
 
+## Publicar cambios
+
+No hay despliegue automático al hacer push: `main` puede acumular commits y
+tú decides cuándo publicarlos.
+
+### Desde tu máquina
+
+```bash
+ssh -i ~/.ssh/stackline.pem ubuntu@3.142.8.206 './stackline/stack-line-services/deploy/deploy.sh'
+```
+
+El script trae ambos repositorios y **reconstruye solo lo que cambió**,
+comparando el commit antes y después del pull. Un cambio en el README o en
+el compose no recompila el jar, que son ~8 minutos en esta instancia.
+
+Para forzar: `deploy.sh backend`, `deploy.sh web` o `deploy.sh all`.
+
+Termina esperando a que el front y la API respondan; si no lo hacen en tres
+minutos, imprime los logs del backend y sale con error.
+
+### Desde GitHub
+
+Actions → **Deploy** → *Run workflow*, eligiendo qué reconstruir. Hace lo
+mismo por SSH. Requiere cuatro secretos en Settings → Secrets → Actions:
+
+| Secreto | Valor |
+|---|---|
+| `SSH_PRIVATE_KEY` | contenido completo de `stackline.pem` |
+| `SSH_HOST` | la IP elástica del servidor |
+| `SSH_USER` | `ubuntu` |
+| `SSH_KNOWN_HOSTS` | salida de `ssh-keyscan -t ed25519 <IP>` |
+
+`SSH_KNOWN_HOSTS` evita aceptar a ciegas cualquier servidor que responda: sin
+él, un intermediario podría suplantarlo y quedarse con la clave privada.
+
+Para exigir aprobación antes de cada despliegue: Settings → Environments →
+`produccion` → **Required reviewers**. El flujo queda en espera hasta que
+alguien lo apruebe.
+
+### Las migraciones no llevan paso aparte
+
+Liquibase corre al arrancar el backend, así que se aplican solas. El
+corolario es que una migración con error impide el arranque — y el script lo
+detecta y te muestra el log.
+
 ## Operación
 
 ```bash

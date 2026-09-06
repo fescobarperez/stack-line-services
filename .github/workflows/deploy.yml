@@ -1,0 +1,56 @@
+# Despliegue a producción — SOLO manual.
+#
+# No hay disparo por `push`: puedes acumular los commits que quieras en main
+# y publicar cuando decidas, desde la pestaña Actions → Deploy → Run workflow.
+# Reconstruir el backend son ~8 minutos en la instancia actual, así que
+# desplegar en cada push dejaría el servidor ocupado casi todo el día.
+#
+# Despliega AMBOS repositorios: el servidor hace pull de los dos, así que un
+# cambio en stack-line-ui también se publica ejecutando este flujo.
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Qué reconstruir"
+        type: choice
+        required: true
+        default: auto
+        options: [auto, backend, web, all]
+
+# Dos despliegues a la vez sobre el mismo servidor se pisan: el segundo
+# espera a que termine el primero en vez de arrancar en paralelo.
+concurrency:
+  group: deploy-produccion
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # El entorno permite exigir aprobación de alguien antes de correr:
+    # Settings → Environments → produccion → Required reviewers.
+    environment: produccion
+    timeout-minutes: 25
+
+    steps:
+      - name: Preparar la clave SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Se fija la huella del servidor en vez de aceptar cualquiera:
+          # sin esto, un intermediario podría suplantarlo y recibir la clave.
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Desplegar
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "~/stackline/stack-line-services/deploy/deploy.sh ${{ inputs.target }}"
+
+      - name: Limpiar
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
