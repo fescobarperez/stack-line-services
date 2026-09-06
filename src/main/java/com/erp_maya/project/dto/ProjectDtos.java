@@ -38,7 +38,8 @@ public class ProjectDtos {
     /** Cobro imputado al proyecto: adelanto, avance o liquidación. */
     @Serdeable
     public record PaymentResponse(Long id, BigDecimal amount, LocalDate paymentDate,
-                                  String method, String reference) {}
+                                  String method, String reference, String receiptNumber,
+                                  java.time.Instant receiptPrintedAt) {}
 
     @Serdeable
     public record CostResponse(Long id, String source, Long refId, String description,

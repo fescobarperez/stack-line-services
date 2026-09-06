@@ -419,6 +419,7 @@ public class ProjectService {
                         c.getAmount(), c.getCostDate())).toList() : List.of(),
                 withCosts ? paid.stream().map(x -> new ProjectDtos.PaymentResponse(
                         x.getId(), x.getAmount(), x.getPaymentDate(),
-                        x.getMethod(), x.getReference())).toList() : List.of());
+                        x.getMethod(), x.getReference(),
+                        x.getReceiptNumber(), x.getReceiptPrintedAt())).toList() : List.of());
     }
 }
