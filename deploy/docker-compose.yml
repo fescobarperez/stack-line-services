@@ -48,7 +48,7 @@ services:
       # además del base. Va aquí y no en el Dockerfile a propósito: así la
       # imagen es UNA sola y la misma que se probó en staging es la que sube a
       # producción, cambiando solo cómo se arranca.
-      MICRONAUT_ENVIRONMENTS: ${APP_ENV:-prod}
+      MICRONAUT_ENVIRONMENTS: ${APP_ENV:-dev}
       # DB_HOST apunta a RDS. Para volver al contenedor: DB_HOST=db y
       # levantar con --profile local-db.
       DB_URL: jdbc:postgresql://${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-erp_maya}

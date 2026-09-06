@@ -87,14 +87,18 @@ micronaut {
 
 }
 
-// Al correr en local se activa el entorno `dev`, que carga
-// application-dev.properties — el archivo que git ignora y donde vive la
+// Al correr en la máquina propia se activa el entorno `local`, que carga
+// application-local.properties — el archivo que git ignora y donde vive la
 // contraseña de la base. Sin esto habría que acordarse de exportar
 // MICRONAUT_ENVIRONMENTS en cada terminal y en cada configuración del IDE.
 //
+// `local` es tu máquina; `dev` es el servidor de desarrollo. Nombres
+// distintos porque su configuración es distinta y una de las dos lleva
+// secretos que no pueden versionarse.
+//
 // No afecta al servidor: allá corre el jar con `java -jar`, no esta tarea.
 tasks.named<JavaExec>("run") {
-    environment("MICRONAUT_ENVIRONMENTS", System.getenv("MICRONAUT_ENVIRONMENTS") ?: "dev")
+    environment("MICRONAUT_ENVIRONMENTS", System.getenv("MICRONAUT_ENVIRONMENTS") ?: "local")
 }
 
 tasks.named<io.micronaut.gradle.docker.MicronautDockerfile>("dockerfile") {
