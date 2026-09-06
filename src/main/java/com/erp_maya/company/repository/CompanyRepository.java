@@ -10,4 +10,7 @@ import java.util.Optional;
 public interface CompanyRepository extends JpaRepository<Company, Long> {
 
     Optional<Company> findByCode(String code);
+
+    /** El NIT es único: el seeder lo consulta antes de crear una empresa. */
+    Optional<Company> findByNit(String nit);
 }

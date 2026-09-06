@@ -43,6 +43,7 @@ public class DevDataSeeder {
      */
     private final String companyCode;
     private final String companyName;
+    private final String companyNit;
     private final String adminEmail;
     private final String adminPassword;
 
@@ -50,10 +51,12 @@ public class DevDataSeeder {
                          UserRepository users, PasswordEncoder passwordEncoder,
                          @Value("${erp.seed.company-code:TIENDA-DEMO}") String companyCode,
                          @Value("${erp.seed.company-name:Tienda Demo ERP MAYA}") String companyName,
+                         @Value("${erp.seed.company-nit:1234567-8}") String companyNit,
                          @Value("${erp.seed.admin-email:admin@demo.gt}") String adminEmail,
                          @Value("${erp.seed.admin-password:admin123}") String adminPassword) {
         this.companyCode = companyCode;
         this.companyName = companyName;
+        this.companyNit = companyNit;
         this.adminEmail = adminEmail;
         this.adminPassword = adminPassword;
         this.companies = companies;
@@ -68,11 +71,20 @@ public class DevDataSeeder {
         if (companies.findByCode(companyCode).isPresent()) {
             return;
         }
+        // El código es distinto pero el NIT ya está tomado: sembrar aquí
+        // rompería con una violación de unicidad a mitad del arranque, y el
+        // servicio no levanta. Pasa al apuntar una instalación nueva contra
+        // una base que ya tiene empresa.
+        if (companies.findByNit(companyNit).isPresent()) {
+            LOG.warn("No se sembró '{}': el NIT {} ya pertenece a otra empresa. "
+                     + "Define erp.seed.company-nit o apaga el seed.", companyCode, companyNit);
+            return;
+        }
 
         Company company = new Company();
         company.setCode(companyCode);
         company.setName(companyName);
-        company.setNit("1234567-8");
+        company.setNit(companyNit);
         company.setPlan("standard");
         company.setStatus("active");
         company = companies.save(company);
