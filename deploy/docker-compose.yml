@@ -1,0 +1,76 @@
+# Stackline — pila de producción.
+#
+# Se asume que los dos repos están clonados como hermanos:
+#   ~/stackline/stack-line-services   ← este
+#   ~/stackline/stack-line-ui
+#
+# Arranque:  cd stack-line-services/deploy && docker compose up -d --build
+
+name: stackline
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-erp_maya}
+      POSTGRES_USER: ${DB_USER:-erp_maya}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?define DB_PASSWORD en .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Sin `ports`: la base NO se expone al internet. Solo la ven los otros
+    # contenedores por la red interna. Para entrar desde fuera, túnel SSH.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-erp_maya} -d ${DB_NAME:-erp_maya}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy   # Liquibase corre al arrancar: sin esto
+                                     # el backend muere en el primer intento
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-erp_maya}
+      DB_USER: ${DB_USER:-erp_maya}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET en .env}
+      # Crea la empresa y el primer usuario en el arranque inicial, y no hace
+      # nada si la empresa ya existe. Dejarlo encendido es inofensivo; lo que
+      # NO puede quedarse es la contraseña por defecto, de ahí el :? .
+      ERP_SEED_ENABLED: "${SEED_ENABLED:-true}"
+      ERP_SEED_COMPANY_CODE: ${SEED_COMPANY_CODE:?define SEED_COMPANY_CODE en .env}
+      ERP_SEED_COMPANY_NAME: ${SEED_COMPANY_NAME:-Stackline}
+      ERP_SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?define SEED_ADMIN_EMAIL en .env}
+      ERP_SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?define SEED_ADMIN_PASSWORD en .env}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70}
+    # Tampoco se expone: solo Caddy le habla, por la red interna.
+
+  web:
+    build:
+      # El repo se llama stack-line-ui, pero en la máquina de desarrollo la
+      # carpeta es maya-ui. UI_CONTEXT lo resuelve sin editar este archivo.
+      context: ${UI_CONTEXT:-../../stack-line-ui}
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      API_UPSTREAM: backend:8080
+    ports:
+      - "80:80"
+      - "443:443"
+
+    volumes:
+      - caddydata:/data      # certificados: sin esto se re-emiten en cada
+      - caddyconfig:/config  # reinicio y Let's Encrypt tiene límite semanal
+
+volumes:
+  pgdata:
+  caddydata:
+  caddyconfig:

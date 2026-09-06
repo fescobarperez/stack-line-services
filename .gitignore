@@ -13,3 +13,6 @@ out/
 .settings
 .classpath
 .factorypath
+
+# Secretos del despliegue: nunca al repositorio.
+deploy/.env

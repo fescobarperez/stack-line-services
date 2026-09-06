@@ -7,6 +7,7 @@ import com.erp_maya.security.domain.User;
 import com.erp_maya.security.repository.RoleRepository;
 import com.erp_maya.security.repository.UserRepository;
 import io.micronaut.context.annotation.Requires;
+import io.micronaut.context.annotation.Value;
 import io.micronaut.context.event.StartupEvent;
 import io.micronaut.runtime.event.annotation.EventListener;
 import jakarta.inject.Singleton;
@@ -27,17 +28,34 @@ public class DevDataSeeder {
 
     private static final Logger LOG = LoggerFactory.getLogger(DevDataSeeder.class);
 
-    private static final String COMPANY_CODE = "TIENDA-DEMO";
-    private static final String ADMIN_EMAIL = "admin@demo.gt";
-    private static final String ADMIN_PASSWORD = "admin123";
-
     private final CompanyRepository companies;
     private final RoleRepository roles;
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
 
+    /**
+     * Datos del primer acceso. Los valores por defecto son los de desarrollo de
+     * siempre; en un servidor se sobreescriben por variable de entorno.
+     *
+     * La contraseña se parametriza para poder usar esto como arranque de una
+     * instalación nueva: apagar el seeder deja el sistema sin forma de entrar,
+     * y dejar 'admin123' en una IP pública es una puerta abierta.
+     */
+    private final String companyCode;
+    private final String companyName;
+    private final String adminEmail;
+    private final String adminPassword;
+
     public DevDataSeeder(CompanyRepository companies, RoleRepository roles,
-                         UserRepository users, PasswordEncoder passwordEncoder) {
+                         UserRepository users, PasswordEncoder passwordEncoder,
+                         @Value("${erp.seed.company-code:TIENDA-DEMO}") String companyCode,
+                         @Value("${erp.seed.company-name:Tienda Demo ERP MAYA}") String companyName,
+                         @Value("${erp.seed.admin-email:admin@demo.gt}") String adminEmail,
+                         @Value("${erp.seed.admin-password:admin123}") String adminPassword) {
+        this.companyCode = companyCode;
+        this.companyName = companyName;
+        this.adminEmail = adminEmail;
+        this.adminPassword = adminPassword;
         this.companies = companies;
         this.roles = roles;
         this.users = users;
@@ -47,13 +65,13 @@ public class DevDataSeeder {
     @EventListener
     @Transactional
     public void onStartup(StartupEvent event) {
-        if (companies.findByCode(COMPANY_CODE).isPresent()) {
+        if (companies.findByCode(companyCode).isPresent()) {
             return;
         }
 
         Company company = new Company();
-        company.setCode(COMPANY_CODE);
-        company.setName("Tienda Demo ERP MAYA");
+        company.setCode(companyCode);
+        company.setName(companyName);
         company.setNit("1234567-8");
         company.setPlan("standard");
         company.setStatus("active");
@@ -70,12 +88,13 @@ public class DevDataSeeder {
         user.setCompanyId(company.getId());
         user.setRole(admin);
         user.setName("Administrador Demo");
-        user.setEmail(ADMIN_EMAIL);
-        user.setPasswordHash(passwordEncoder.encode(ADMIN_PASSWORD));
+        user.setEmail(adminEmail);
+        user.setPasswordHash(passwordEncoder.encode(adminPassword));
         user.setStatus("active");
         users.save(user);
 
-        LOG.info("Seed de desarrollo creado: empresa '{}' / login {} · {} / password '{}'",
-                COMPANY_CODE, COMPANY_CODE, ADMIN_EMAIL, ADMIN_PASSWORD);
+        // La contraseña no se registra: en desarrollo se sabe cuál es, y en un
+        // servidor no tiene por qué quedar escrita en el log.
+        LOG.info("Instalación inicial creada: empresa '{}' · usuario {}", companyCode, adminEmail);
     }
 }
