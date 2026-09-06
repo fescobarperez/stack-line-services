@@ -2,6 +2,7 @@ package com.erp_maya.pos.controller;
 
 import com.erp_maya.pos.dto.SaleDtos;
 import com.erp_maya.pos.service.SaleService;
+import io.micronaut.core.annotation.Nullable;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 import io.micronaut.http.HttpStatus;
@@ -24,6 +25,12 @@ public class SaleController {
     @Get
     public Page<SaleDtos.Response> list(Pageable pageable) {
         return service.list(pageable);
+    }
+
+    /** Registra que el impreso original salió hacia el cliente. */
+    @Post("/{id}/deliver")
+    public SaleDtos.Response deliver(Long id, @Nullable @Body SaleDtos.DeliverRequest request) {
+        return service.deliver(id, request);
     }
 
     @Get("/{id}")

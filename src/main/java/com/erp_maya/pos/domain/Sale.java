@@ -58,6 +58,16 @@ public class Sale {
     private boolean credit = false;
 
     /**
+     * Entrega del impreso original. Nulo = retenida hasta que el cliente salde.
+     * No tiene efecto fiscal: el DTE se emitió y certificó al facturar.
+     */
+    @Column(name = "delivered_at")
+    private Instant deliveredAt;
+
+    @Column(name = "delivered_to")
+    private String deliveredTo;
+
+    /**
      * Total con signo por tipo, generado por la base (ver la 045). Solo lectura:
      * escribirlo desde aquí haría fallar el INSERT contra una columna GENERATED.
      * `@Generated` hace que Hibernate lo relea tras insertar o actualizar; sin
@@ -147,6 +157,12 @@ public class Sale {
 
     public Long getRelatedSaleId() { return relatedSaleId; }
     public void setRelatedSaleId(Long relatedSaleId) { this.relatedSaleId = relatedSaleId; }
+
+    public Instant getDeliveredAt() { return deliveredAt; }
+    public void setDeliveredAt(Instant deliveredAt) { this.deliveredAt = deliveredAt; }
+
+    public String getDeliveredTo() { return deliveredTo; }
+    public void setDeliveredTo(String deliveredTo) { this.deliveredTo = deliveredTo; }
 
     public boolean isCredit() { return credit; }
     public void setCredit(boolean credit) { this.credit = credit; }

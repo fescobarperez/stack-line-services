@@ -12,12 +12,15 @@ public final class PaymentDtos {
     private PaymentDtos() {}
 
     @Serdeable
+    /** `bankAccountId` es obligatorio en transferencia y depósito; en los demás sobra. */
     public record Request(@NotNull Long clientId, Long saleId, Long projectId, @NotNull BigDecimal amount,
-                          LocalDate paymentDate, String method, String reference, String notes) {}
+                          LocalDate paymentDate, String method, String reference, String notes,
+                          Long bankAccountId) {}
 
     @Serdeable
     public record Response(Long id, Long clientId, String clientName, Long saleId, Long projectId,
                            BigDecimal amount,
                            LocalDate paymentDate, String method, String reference, String notes,
-                           String receiptNumber, Instant receiptPrintedAt) {}
+                           String receiptNumber, Instant receiptPrintedAt,
+                           Long bankAccountId, Long bankMovementId) {}
 }

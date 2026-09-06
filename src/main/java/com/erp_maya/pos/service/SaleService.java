@@ -289,6 +289,26 @@ public class SaleService {
         return toResponse(saved);
     }
 
+    /**
+     * Registra la entrega del impreso original al cliente.
+     *
+     * No valida que esté saldada a propósito: retener la factura hasta el pago
+     * final es una costumbre, no una regla, y hay motivos legítimos para
+     * entregarla antes. Lo que importa es que quede constancia de cuándo salió.
+     */
+    @Transactional
+    public SaleDtos.Response deliver(Long id, SaleDtos.DeliverRequest req) {
+        Sale s = sales.findByIdAndCompanyId(id, tenant.getCompanyId())
+                .orElseThrow(() -> new ResourceNotFoundException("Documento " + id + " no encontrado"));
+        if (s.getDeliveredAt() == null) {
+            s.setDeliveredAt(Instant.now());
+            s.setDeliveredTo(req != null && req.deliveredTo() != null && !req.deliveredTo().isBlank()
+                    ? req.deliveredTo().trim() : null);
+            sales.update(s);
+        }
+        return toResponse(s);
+    }
+
     private Branch resolveBranch(Long branchId, User user, Long companyId) {
         if (branchId != null) {
             return branches.findByIdAndCompanyId(branchId, companyId)
@@ -368,6 +388,7 @@ public class SaleService {
                 s.getUser() != null ? s.getUser().getId() : null,
                 s.getCashRegister() != null ? s.getCashRegister().getId() : null,
                 s.getSaleDate(), s.getPaymentMethod(), s.getSubtotal(), s.getTax(), s.getTaxRate(), s.getTotal(), signedOf(s), s.isCredit(), s.getProjectId(),
+                s.getDeliveredAt(), s.getDeliveredTo(),
                 s.getStatus(), items);
     }
 }

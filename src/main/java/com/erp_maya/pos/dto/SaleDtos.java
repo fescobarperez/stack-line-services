@@ -34,6 +34,10 @@ public final class SaleDtos {
                           Boolean credit, BigDecimal discountTotal, Long authorizationId,
                           Long projectId, @NotEmpty @Valid List<ItemRequest> items) {}
 
+    /** Quién recibió el impreso original. Vacío = lo recibió el cliente. */
+    @Serdeable
+    public record DeliverRequest(String deliveredTo) {}
+
     @Serdeable
     public record ItemResponse(Long id, Long productId, String productName, BigDecimal quantity,
                                BigDecimal unitPrice, BigDecimal discount, BigDecimal lineTotal) {}
@@ -45,5 +49,6 @@ public final class SaleDtos {
                            Instant saleDate, String paymentMethod, BigDecimal subtotal, BigDecimal tax,
                            BigDecimal taxRate, BigDecimal total, BigDecimal signedTotal,
                            boolean credit, Long projectId,
+                           Instant deliveredAt, String deliveredTo,
                            String status, List<ItemResponse> items) {}
 }

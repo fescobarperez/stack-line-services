@@ -1,5 +1,7 @@
 package com.erp_maya.receivable.service;
 
+import com.erp_maya.bank.dto.BankDtos;
+import com.erp_maya.bank.service.BankService;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
 import com.erp_maya.partner.domain.Client;
@@ -16,20 +18,30 @@ import jakarta.transaction.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 
 @Singleton
 public class PaymentService {
+
+    /**
+     * Métodos en los que el dinero entra a un banco y por tanto exigen cuenta.
+     * Efectivo y tarjeta quedan fuera: el efectivo va a la caja y la tarjeta
+     * liquida después, con comisión, por una vía que este cobro no conoce.
+     */
+    private static final Set<String> BANK_METHODS = Set.of("transferencia", "deposito", "depósito");
 
     private final PaymentRepository payments;
     private final ClientRepository clients;
     private final SaleRepository sales;
     private final DocumentSequenceService sequences;
+    private final BankService banks;
     private final TenantContext tenant;
 
     public PaymentService(PaymentRepository payments, ClientRepository clients,
                           SaleRepository sales, DocumentSequenceService sequences,
-                          TenantContext tenant) {
+                          BankService banks, TenantContext tenant) {
         this.sequences = sequences;
+        this.banks = banks;
         this.payments = payments;
         this.clients = clients;
         this.sales = sales;
@@ -71,11 +83,36 @@ public class PaymentService {
             sales.findByIdAndCompanyId(req.saleId(), companyId).ifPresent(p::setSale);
         }
         p.setProjectId(req.projectId());
+
+        // Sin cuenta, una transferencia entra en cuentas por cobrar pero no
+        // aparece en ningún banco, y la conciliación no cuadra nunca.
+        String method = req.method() != null ? req.method().trim().toLowerCase() : "";
+        boolean needsBank = BANK_METHODS.contains(method);
+        if (needsBank && req.bankAccountId() == null) {
+            throw new IllegalStateException(
+                    "Un cobro por " + method + " necesita la cuenta bancaria a la que entró el dinero.");
+        }
+        p.setBankAccountId(req.bankAccountId());
+
         // El recibo es el papel que se le entrega al cliente por este abono.
         // Se numera dentro de la misma transacción: si el cobro falla, el
         // correlativo se devuelve con el rollback y no queda un hueco.
         p.setReceiptNumber(sequences.next("RECIBO", "A"));
         Payment saved = payments.save(p);
+
+        // El movimiento bancario es consecuencia del cobro, no un registro
+        // paralelo: se crea aquí para que nadie tenga que acordarse de
+        // anotarlo aparte, que es como los dos saldos terminan discrepando.
+        if (needsBank) {
+            var mov = banks.addMovement(req.bankAccountId(), new BankDtos.MovementRequest(
+                    req.amount(), "deposit",
+                    "Cobro " + saved.getReceiptNumber() + " · " + client.getName(),
+                    req.reference() != null && !req.reference().isBlank()
+                            ? req.reference() : saved.getReceiptNumber(),
+                    saved.getPaymentDate()));
+            saved.setBankMovementId(mov.id());
+            payments.update(saved);
+        }
 
         // Antes aquí se restaba `client.balance`. Ya no: el saldo se deriva en
         // v_client_balance (046). Mantener además un contador era tener dos
@@ -107,6 +144,7 @@ public class PaymentService {
                 p.getSale() != null ? p.getSale().getId() : null,
                 p.getProjectId(),
                 p.getAmount(), p.getPaymentDate(), p.getMethod(), p.getReference(), p.getNotes(),
-                p.getReceiptNumber(), p.getReceiptPrintedAt());
+                p.getReceiptNumber(), p.getReceiptPrintedAt(),
+                p.getBankAccountId(), p.getBankMovementId());
     }
 }

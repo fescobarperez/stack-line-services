@@ -41,6 +41,14 @@ public class Payment {
     @Column(name = "project_id")
     private Long projectId;
 
+    /** Cuenta a la que entró el dinero. Solo transferencia y depósito. */
+    @Column(name = "bank_account_id")
+    private Long bankAccountId;
+
+    /** Movimiento bancario que generó este cobro, si generó alguno. */
+    @Column(name = "bank_movement_id")
+    private Long bankMovementId;
+
     /** Correlativo del recibo que se le entrega al cliente por este abono. */
     @Column(name = "receipt_number")
     private String receiptNumber;
@@ -63,6 +71,12 @@ public class Payment {
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
+
+    public Long getBankAccountId() { return bankAccountId; }
+    public void setBankAccountId(Long bankAccountId) { this.bankAccountId = bankAccountId; }
+
+    public Long getBankMovementId() { return bankMovementId; }
+    public void setBankMovementId(Long bankMovementId) { this.bankMovementId = bankMovementId; }
 
     public String getReceiptNumber() { return receiptNumber; }
     public void setReceiptNumber(String receiptNumber) { this.receiptNumber = receiptNumber; }
