@@ -2,6 +2,7 @@ package com.erp_maya.project.service;
 
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.accounting.service.PostingService;
 import com.erp_maya.authorization.dto.AuthorizationDtos;
 import com.erp_maya.authorization.service.AuthorizationService;
 import com.erp_maya.catalog.domain.Product;
@@ -64,6 +65,7 @@ public class ProjectService {
     private final StockService stockService;
     private final UserRepository users;
     private final AuthorizationService authorizations;
+    private final PostingService posting;
     private final TenantContext tenant;
 
     public ProjectService(Projects projects, Costs costs, QuoteRepository quotes,
@@ -73,6 +75,7 @@ public class ProjectService {
                           ProductRepository products, BranchRepository branches,
                           ProductStockRepository stock, StockService stockService,
                           UserRepository users, AuthorizationService authorizations,
+                          PostingService posting,
                           TenantContext tenant) {
         this.projects = projects;
         this.costs = costs;
@@ -88,6 +91,7 @@ public class ProjectService {
         this.stockService = stockService;
         this.users = users;
         this.authorizations = authorizations;
+        this.posting = posting;
         this.tenant = tenant;
     }
 
@@ -240,6 +244,23 @@ public class ProjectService {
         User user = userId == null ? null : users.findByIdAndCompanyId(userId, companyId).orElse(null);
         var movement = stockService.applyMovement(product, branch, user, "project_consumption",
                 req.quantity().negate(), "project", p.getCode(), req.batch());
+
+        // El material que sale de bodega deja de ser inventario y pasa a ser
+        // costo del proyecto. Sin este asiento, el balance seguiría mostrando
+        // como existencias algo que ya se gastó.
+        //
+        //   Costo de ventas   débito   al costo promedio
+        //   Inventario                 crédito
+        //
+        // Va al costo del proyecto vía su centro de costo, que es lo que
+        // permite filtrar el gasto por obra en los reportes contables.
+        posting.post("project_consumption", movement.getId(), LocalDate.now(),
+                "Consumo " + product.getName() + " · " + p.getCode(), p.getCode(),
+                PostingService.lines(
+                        PostingService.Line.debit("posting.cost_of_sales", amount,
+                                product.getName() + " × " + req.quantity(), p.getCostCenterId()),
+                        PostingService.Line.credit("posting.inventory", amount,
+                                product.getName(), p.getCostCenterId())));
 
         ProjectCost c = new ProjectCost();
         c.setCompanyId(companyId);

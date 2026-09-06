@@ -1,5 +1,6 @@
 package com.erp_maya.receivable.service;
 
+import com.erp_maya.accounting.service.PostingService;
 import com.erp_maya.bank.dto.BankDtos;
 import com.erp_maya.bank.service.BankService;
 import com.erp_maya.common.ResourceNotFoundException;
@@ -35,11 +36,13 @@ public class PaymentService {
     private final SaleRepository sales;
     private final DocumentSequenceService sequences;
     private final BankService banks;
+    private final PostingService posting;
     private final TenantContext tenant;
 
     public PaymentService(PaymentRepository payments, ClientRepository clients,
                           SaleRepository sales, DocumentSequenceService sequences,
-                          BankService banks, TenantContext tenant) {
+                          BankService banks, PostingService posting, TenantContext tenant) {
+        this.posting = posting;
         this.sequences = sequences;
         this.banks = banks;
         this.payments = payments;
@@ -114,11 +117,38 @@ public class PaymentService {
             payments.update(saved);
         }
 
+        contabilizar(saved, client.getName());
+
         // Antes aquí se restaba `client.balance`. Ya no: el saldo se deriva en
         // v_client_balance (046). Mantener además un contador era tener dos
         // definiciones de cuentas por cobrar que se contradecían — el contador
         // solo bajaba, porque nadie lo subía al facturar.
         return toResponse(saved);
+    }
+
+    /**
+     * Lleva el cobro al libro mayor.
+     *
+     *   Caja o Bancos   débito   el monto
+     *   Clientes                 crédito el monto
+     *
+     * Es lo que pediste cuando hablamos de contabilidad: el cobro genera su
+     * propio asiento, parcial o total, en vez de esperar a que la factura se
+     * salde. Sin IVA: ese ya lo devengó la factura al emitirse, y volver a
+     * registrarlo aquí lo pagaría dos veces.
+     */
+    private void contabilizar(Payment p, String clientName) {
+        if (p.getAmount() == null || p.getAmount().signum() == 0) return;
+
+        // A dónde entró el dinero. El cheque se trata como caja: está en la
+        // gaveta hasta que alguien lo deposite.
+        String destino = p.getBankAccountId() != null ? "posting.bank" : "posting.cash";
+        String ref = p.getReceiptNumber();
+        String desc = "Cobro " + ref + " · " + clientName;
+
+        posting.post("payment", p.getId(), p.getPaymentDate(), desc, ref, PostingService.lines(
+                PostingService.Line.debit(destino, p.getAmount(), desc, null),
+                PostingService.Line.credit("posting.receivable", p.getAmount(), desc, null)));
     }
 
     /**

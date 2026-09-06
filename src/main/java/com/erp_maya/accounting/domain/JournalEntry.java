@@ -49,6 +49,20 @@ public class JournalEntry {
     @Column(name = "source_type")
     private String sourceType;
 
+    /** Id del documento que originó la partida, junto con sourceType. */
+    @Column(name = "source_id")
+    private Long sourceId;
+
+    /** Si esta partida reversa a otra, cuál. Una partida emitida no se borra. */
+    @Column(name = "reverses_entry_id")
+    private Long reversesEntryId;
+
+    public Long getSourceId() { return sourceId; }
+    public void setSourceId(Long sourceId) { this.sourceId = sourceId; }
+
+    public Long getReversesEntryId() { return reversesEntryId; }
+    public void setReversesEntryId(Long reversesEntryId) { this.reversesEntryId = reversesEntryId; }
+
     @Column(name = "total_debit")
     private BigDecimal totalDebit = BigDecimal.ZERO;
 

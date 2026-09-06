@@ -4,6 +4,7 @@ import com.erp_maya.catalog.domain.Product;
 import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.accounting.service.PostingService;
 import com.erp_maya.authorization.dto.AuthorizationDtos;
 import com.erp_maya.authorization.service.AuthorizationService;
 import com.erp_maya.project.domain.Project;
@@ -70,6 +71,7 @@ public class SaleService {
     private final TaxService taxService;
     private final ProjectRepositories.Projects projects;
     private final DocumentSequenceService sequences;
+    private final PostingService posting;
     private final AuthorizationService authorizations;
     private final TenantContext tenant;
 
@@ -78,7 +80,9 @@ public class SaleService {
                        PromotionUsageRepository promotionUsage,
                        StockService stockService, FelService fel, TenantContext tenant,
                        TaxService taxService, ProjectRepositories.Projects projects,
-                       AuthorizationService authorizations, DocumentSequenceService sequences) {
+                       AuthorizationService authorizations, DocumentSequenceService sequences,
+                       PostingService posting) {
+        this.posting = posting;
         this.projects = projects;
         this.sequences = sequences;
         this.authorizations = authorizations;
@@ -277,6 +281,8 @@ public class SaleService {
             registers.update(register);
         }
 
+        contabilizar(saved);
+
         // DTE de la venta. En Guatemala toda venta pagada emite factura, así que se
         // certifica en la misma transacción: si el DTE falla, la venta no queda huérfana.
         // Nota: FelService.certify() hoy simula al certificador; cuando se integre el
@@ -307,6 +313,47 @@ public class SaleService {
             sales.update(s);
         }
         return toResponse(s);
+    }
+
+    /**
+     * Lleva la venta al libro mayor.
+     *
+     *   Contado    Caja      débito total
+     *   Crédito    Clientes  débito total
+     *              Ingresos            crédito base
+     *              IVA débito          crédito impuesto
+     *
+     * El IVA en Guatemala va incluido en el precio, así que el ingreso es el
+     * total MENOS el impuesto — no el total. Registrar el total como ingreso
+     * inflaría las ventas en un 12% y pagaría ISR de más.
+     *
+     * Una nota de crédito invierte los signos sola, porque se usa signedTotal.
+     */
+    private void contabilizar(Sale sale) {
+        BigDecimal total = sale.getSignedTotal() != null ? sale.getSignedTotal() : sale.getTotal();
+        if (total == null || total.signum() == 0) return;
+
+        BigDecimal tax = sale.getTax() != null ? sale.getTax() : BigDecimal.ZERO;
+        if (total.signum() < 0) tax = tax.negate();       // NCRE: todo al revés
+        BigDecimal base = total.subtract(tax);
+
+        // El destino del cargo: al fiado es una cuenta por cobrar, de contado
+        // es dinero que entró a la caja.
+        String destino = sale.isCredit() ? "posting.receivable" : "posting.cash";
+        Long cc = costCenterOf(sale.getProjectId());
+        String ref = sale.getDocNumber();
+        String desc = ("NCRE".equals(sale.getDocType()) ? "Nota de crédito " : "Venta ") + ref;
+
+        posting.post("sale", sale.getId(), LocalDate.now(), desc, ref, PostingService.lines(
+                new PostingService.Line(destino, total, BigDecimal.ZERO, desc, cc),
+                new PostingService.Line("posting.revenue", BigDecimal.ZERO, base, "Ingresos " + ref, cc),
+                new PostingService.Line("posting.tax_payable", BigDecimal.ZERO, tax, "IVA " + ref, cc)));
+    }
+
+    /** El centro de costo del proyecto, para que los reportes filtren por él. */
+    private Long costCenterOf(Long projectId) {
+        if (projectId == null) return null;
+        return projects.findById(projectId).map(Project::getCostCenterId).orElse(null);
     }
 
     private Branch resolveBranch(Long branchId, User user, Long companyId) {

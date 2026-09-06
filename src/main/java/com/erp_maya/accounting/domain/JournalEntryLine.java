@@ -36,6 +36,19 @@ public class JournalEntryLine {
 
     private BigDecimal credit = BigDecimal.ZERO;
 
+    /** Centro de costo de ESTA línea: es lo que permite el reporte por proyecto. */
+    @Column(name = "cost_center_id")
+    private Long costCenterId;
+
+    @Column(name = "description")
+    private String description;
+
+    public Long getCostCenterId() { return costCenterId; }
+    public void setCostCenterId(Long costCenterId) { this.costCenterId = costCenterId; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
