@@ -16,3 +16,6 @@ out/
 
 # Secretos del despliegue: nunca al repositorio.
 deploy/.env
+
+# Configuración local con secretos: nunca al repositorio.
+src/main/resources/application-dev.properties
