@@ -13,6 +13,10 @@ public record ProductRequest(
         BigDecimal price,
         BigDecimal cost,
         String unit,
+        String purchaseUnit,
+        BigDecimal purchaseFactor,
+        String itemType,
+        Boolean tracksStock,
         BigDecimal minStock,
         String status
 ) {

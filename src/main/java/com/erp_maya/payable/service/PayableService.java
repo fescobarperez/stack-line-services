@@ -2,6 +2,8 @@ package com.erp_maya.payable.service;
 
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.project.domain.ProjectCost;
+import com.erp_maya.project.repository.ProjectRepositories;
 import com.erp_maya.partner.domain.Supplier;
 import com.erp_maya.partner.repository.SupplierRepository;
 import com.erp_maya.payable.domain.PurchaseInvoice;
@@ -26,14 +28,20 @@ public class PayableService {
     private final SupplierPaymentRepository paymentsRepo;
     private final SupplierRepository suppliers;
     private final PurchaseOrderRepository orders;
+    private final ProjectRepositories.Projects projects;
+    private final ProjectRepositories.Costs projectCosts;
     private final TenantContext tenant;
 
     public PayableService(PurchaseInvoiceRepository invoices, SupplierPaymentRepository paymentsRepo,
-                          SupplierRepository suppliers, PurchaseOrderRepository orders, TenantContext tenant) {
+                          SupplierRepository suppliers, PurchaseOrderRepository orders, TenantContext tenant,
+                          ProjectRepositories.Projects projects,
+                          ProjectRepositories.Costs projectCosts) {
         this.invoices = invoices;
         this.paymentsRepo = paymentsRepo;
         this.suppliers = suppliers;
         this.orders = orders;
+        this.projects = projects;
+        this.projectCosts = projectCosts;
         this.tenant = tenant;
     }
 
@@ -63,7 +71,29 @@ public class PayableService {
         if (req.purchaseOrderId() != null) {
             orders.findByIdAndCompanyId(req.purchaseOrderId(), companyId).ifPresent(inv::setPurchaseOrder);
         }
+        // Si no se indica proyecto, se hereda el de la orden de compra: quien
+        // pidió para un proyecto no debería tener que repetirlo al facturar.
+        Long projectId = req.projectId();
+        if (projectId == null && inv.getPurchaseOrder() != null) {
+            projectId = inv.getPurchaseOrder().getProjectId();
+        }
+        inv.setProjectId(projectId);
         PurchaseInvoice saved = invoices.save(inv);
+
+        // La factura imputada se convierte en costo ejecutado del proyecto.
+        if (projectId != null) {
+            projects.findByIdAndCompanyId(projectId, companyId).orElseThrow(
+                    () -> new ResourceNotFoundException("Proyecto " + req.projectId() + " no encontrado"));
+            ProjectCost c = new ProjectCost();
+            c.setCompanyId(companyId);
+            c.setProjectId(projectId);
+            c.setSource("purchase");
+            c.setRefId(saved.getId());
+            c.setDescription(supplier.getName() + " · " + saved.getDocNumber());
+            c.setAmount(req.amount());
+            c.setCostDate(req.invoiceDate() != null ? req.invoiceDate() : LocalDate.now());
+            projectCosts.save(c);
+        }
 
         // Aumenta el saldo por pagar del proveedor.
         BigDecimal balance = supplier.getBalance() != null ? supplier.getBalance() : BigDecimal.ZERO;
@@ -114,6 +144,7 @@ public class PayableService {
                 i.getSupplier() != null ? i.getSupplier().getId() : null,
                 i.getSupplier() != null ? i.getSupplier().getName() : null,
                 i.getPurchaseOrder() != null ? i.getPurchaseOrder().getId() : null,
+                i.getProjectId(),
                 i.getInvoiceDate(), i.getDueDate(), i.getAmount(), i.getPaidAmount(), i.getStatus());
     }
 

@@ -14,4 +14,7 @@ public interface PurchaseOrderRepository extends JpaRepository<PurchaseOrder, Lo
     Page<PurchaseOrder> findByCompanyIdOrderByOrderDateDesc(Long companyId, Pageable pageable);
 
     Optional<PurchaseOrder> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Órdenes imputadas a un proyecto: base del costo comprometido. */
+    java.util.List<PurchaseOrder> findByCompanyIdAndProjectId(Long companyId, Long projectId);
 }

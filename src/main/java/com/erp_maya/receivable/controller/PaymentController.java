@@ -38,4 +38,10 @@ public class PaymentController {
     public PaymentDtos.Response create(@Valid @Body PaymentDtos.Request request) {
         return service.create(request);
     }
+
+    /** Marca el recibo como impreso. Reimprimir no lo cambia. */
+    @Post("/{id}/printed")
+    public PaymentDtos.Response markPrinted(Long id) {
+        return service.markPrinted(id);
+    }
 }

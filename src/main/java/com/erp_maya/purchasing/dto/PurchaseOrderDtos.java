@@ -18,7 +18,8 @@ public final class PurchaseOrderDtos {
                               @NotNull BigDecimal unitCost) {}
 
     @Serdeable
-    public record Request(String docNumber, Long supplierId, Long branchId, LocalDate orderDate,
+    public record Request(String docNumber, Long supplierId, Long branchId, Long projectId,
+                          LocalDate orderDate,
                           String notes, @NotEmpty @Valid List<ItemRequest> items) {}
 
     @Serdeable
@@ -27,7 +28,8 @@ public final class PurchaseOrderDtos {
 
     @Serdeable
     public record Response(Long id, String docNumber, Long supplierId, String supplierName,
-                           Long branchId, String branchName, LocalDate orderDate, BigDecimal total,
+                           Long branchId, String branchName, Long projectId,
+                           LocalDate orderDate, BigDecimal total,
                            String status, String notes, List<ItemResponse> items) {}
 
     /** Recepción: cantidades a recibir por renglón. Vacío = recibir todo lo pendiente. */

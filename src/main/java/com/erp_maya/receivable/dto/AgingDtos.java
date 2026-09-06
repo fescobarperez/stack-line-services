@@ -22,9 +22,21 @@ public final class AgingDtos {
     public record BucketRow(String bucket, int count, BigDecimal total) {}
 
     @Serdeable
-    public record ClientRow(Long clientId, String clientName, BigDecimal total, Map<String, BigDecimal> buckets) {}
+    /**
+     * `unapplied` son los abonos a cuenta del cliente, sin documento asignado.
+     * `total` ya los descuenta, para que cuadre con v_client_balance; los
+     * buckets no, porque un anticipo no tiene antigüedad que mostrar.
+     */
+    public record ClientRow(Long clientId, String clientName, BigDecimal total,
+                            BigDecimal unapplied, Map<String, BigDecimal> buckets) {}
 
     @Serdeable
-    public record Aging(BigDecimal totalReceivable, BigDecimal overdue, int openCount, int criticalCount,
+    /**
+     * `totalReceivable` es la suma de documentos abiertos; `unapplied`, los
+     * abonos a cuenta; `netReceivable`, la diferencia — que es lo que de verdad
+     * se debe y lo que coincide con la suma de v_client_balance.
+     */
+    public record Aging(BigDecimal totalReceivable, BigDecimal unapplied, BigDecimal netReceivable,
+                        BigDecimal overdue, int openCount, int criticalCount,
                         List<BucketRow> summary, List<InvoiceRow> invoices, List<ClientRow> byClient) {}
 }

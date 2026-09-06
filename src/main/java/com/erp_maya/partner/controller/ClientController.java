@@ -30,6 +30,13 @@ public class ClientController {
         return service.list(search, pageable);
     }
 
+    /** Autocompletado por NIT en cotizaciones: 200 con el cliente o 404. */
+    @Get("/by-nit/{nit}")
+    public ClientDtos.Response byNit(String nit) {
+        return service.findByNit(nit).orElseThrow(
+                () -> new com.erp_maya.common.ResourceNotFoundException("Sin cliente con NIT " + nit));
+    }
+
     @Get("/{id}")
     public ClientDtos.Response get(Long id) {
         return service.get(id);

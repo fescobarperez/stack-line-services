@@ -40,7 +40,9 @@ public final class QuoteDtos {
                            String supplierName, String supplierNit, String supplierEmail, String supplierContact,
                            LocalDate quoteDate, LocalDate validUntil, LocalDate deadline,
                            String leadTime, String paymentTerms, String createdBy,
-                           BigDecimal subtotal, BigDecimal tax, BigDecimal total, String status, String notes,
+                           Long projectId,
+                           BigDecimal subtotal, BigDecimal tax, BigDecimal taxRate,
+                           BigDecimal total, String status, String notes,
                            List<ItemResponse> items, List<HistoryEntry> history) {}
 
     /** Cambio de estado (enviar/aprobar/rechazar/convertir). */

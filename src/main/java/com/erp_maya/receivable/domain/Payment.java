@@ -37,6 +37,17 @@ public class Payment {
     @JoinColumn(name = "sale_id")
     private Sale sale;
 
+    /** Proyecto al que se imputa el cobro, si viene de uno. */
+    @Column(name = "project_id")
+    private Long projectId;
+
+    /** Correlativo del recibo que se le entrega al cliente por este abono. */
+    @Column(name = "receipt_number")
+    private String receiptNumber;
+
+    @Column(name = "receipt_printed_at")
+    private Instant receiptPrintedAt;
+
     @Column(nullable = false)
     private BigDecimal amount;
 
@@ -53,6 +64,12 @@ public class Payment {
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
 
+    public String getReceiptNumber() { return receiptNumber; }
+    public void setReceiptNumber(String receiptNumber) { this.receiptNumber = receiptNumber; }
+
+    public Instant getReceiptPrintedAt() { return receiptPrintedAt; }
+    public void setReceiptPrintedAt(Instant receiptPrintedAt) { this.receiptPrintedAt = receiptPrintedAt; }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -64,6 +81,9 @@ public class Payment {
 
     public Sale getSale() { return sale; }
     public void setSale(Sale sale) { this.sale = sale; }
+
+    public Long getProjectId() { return projectId; }
+    public void setProjectId(Long projectId) { this.projectId = projectId; }
 
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }

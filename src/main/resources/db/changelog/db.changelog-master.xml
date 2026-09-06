@@ -63,4 +63,21 @@
     <include file="changes/036_authorizations.sql" relativeToChangelogFile="true"/>
     <include file="changes/037_sale_authorization.sql" relativeToChangelogFile="true"/>
 
+    <!-- IVA configurable por empresa e histórico por documento -->
+    <include file="changes/038_tax_rate.sql" relativeToChangelogFile="true"/>
+
+    <!-- Proyectos · capa 1: clasificación de artículos -->
+    <include file="changes/039_item_type.sql" relativeToChangelogFile="true"/>
+    <include file="changes/040_projects.sql" relativeToChangelogFile="true"/>
+    <include file="changes/041_project_payments.sql" relativeToChangelogFile="true"/>
+    <include file="changes/042_project_purchases.sql" relativeToChangelogFile="true"/>
+    <include file="changes/043_project_overrun.sql" relativeToChangelogFile="true"/>
+    <include file="changes/044_sale_project.sql" relativeToChangelogFile="true"/>
+    <include file="changes/045_sale_doc_type.sql" relativeToChangelogFile="true"/>
+    <include file="changes/046_client_balance.sql" relativeToChangelogFile="true"/>
+    <include file="changes/047_project_status.sql" relativeToChangelogFile="true"/>
+    <include file="changes/048_sale_credit.sql" relativeToChangelogFile="true"/>
+    <include file="changes/049_purchase_unit.sql" relativeToChangelogFile="true"/>
+    <include file="changes/050_receipts.sql" relativeToChangelogFile="true"/>
+
 </databaseChangeLog>

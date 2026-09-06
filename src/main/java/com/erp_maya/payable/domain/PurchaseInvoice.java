@@ -30,6 +30,10 @@ public class PurchaseInvoice {
     @Column(name = "company_id", nullable = false)
     private Long companyId;
 
+    /** Proyecto al que se imputa, si pertenece a uno. */
+    @Column(name = "project_id")
+    private Long projectId;
+
     @Column(name = "doc_number", nullable = false)
     private String docNumber;
 
@@ -61,6 +65,9 @@ public class PurchaseInvoice {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    public Long getProjectId() { return projectId; }
+    public void setProjectId(Long projectId) { this.projectId = projectId; }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

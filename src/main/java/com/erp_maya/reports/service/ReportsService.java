@@ -1,6 +1,7 @@
 package com.erp_maya.reports.service;
 
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.settings.service.TaxService;
 import com.erp_maya.dashboard.dto.DashboardDtos.TopProduct;
 import com.erp_maya.dashboard.dto.DashboardDtos.TrendPoint;
 import com.erp_maya.dashboard.repository.DashboardSaleItemRepository;
@@ -29,15 +30,17 @@ import java.util.Map;
 public class ReportsService {
 
     private static final ZoneId ZONE = ZoneId.systemDefault();
-    private static final BigDecimal IVA_FACTOR = new BigDecimal("1.12");
 
     private final DashboardSaleRepository sales;
     private final DashboardSaleItemRepository items;
+    private final TaxService taxService;
     private final TenantContext tenant;
 
-    public ReportsService(DashboardSaleRepository sales, DashboardSaleItemRepository items, TenantContext tenant) {
+    public ReportsService(DashboardSaleRepository sales, DashboardSaleItemRepository items, TenantContext tenant,
+                       TaxService taxService) {
         this.sales = sales;
         this.items = items;
+        this.taxService = taxService;
         this.tenant = tenant;
     }
 
@@ -74,7 +77,10 @@ public class ReportsService {
             long tickets = countByDay.getOrDefault(d, 0L);
             trend.add(new TrendPoint(d, total, tickets));
             if (tickets > 0) {
-                BigDecimal taxable = total.divide(IVA_FACTOR, 2, RoundingMode.HALF_UP);
+                // Usa la tasa vigente de la empresa. Limitación conocida: si la
+                // tasa cambió, un período anterior se desglosaría con la nueva.
+                // Lo exacto sería agrupar por sales.tax_rate, que ya se guarda.
+                BigDecimal taxable = total.divide(taxService.grossFactor(), 2, RoundingMode.HALF_UP);
                 salesBook.add(new SalesBookRow(d, tickets, taxable, total.subtract(taxable), total));
             }
             totalSales = totalSales.add(total);

@@ -27,8 +27,10 @@ public class ProductController {
     }
 
     @Get
-    public Page<ProductResponse> list(@Nullable @QueryValue String search, Pageable pageable) {
-        return service.list(search, pageable);
+    public Page<ProductResponse> list(@Nullable @QueryValue String search,
+                                      @Nullable @QueryValue String itemType,
+                                      Pageable pageable) {
+        return service.list(search, itemType, pageable);
     }
 
     @Get("/{id}")

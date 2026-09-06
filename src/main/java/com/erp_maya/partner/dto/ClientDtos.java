@@ -12,10 +12,11 @@ public final class ClientDtos {
     @Serdeable
     public record Request(@NotBlank String name, String nit, String clientType, String address,
                           String phone, String email, BigDecimal creditLimit, Integer paymentTerms,
-                          BigDecimal balance, String status) {}
+                          BigDecimal openingBalance, String status) {}
 
     @Serdeable
+    /** `balance` es derivado (v_client_balance), no un campo del cliente. */
     public record Response(Long id, String name, String nit, String clientType, String address,
                            String phone, String email, BigDecimal creditLimit, Integer paymentTerms,
-                           BigDecimal balance, String status) {}
+                           BigDecimal balance, BigDecimal openingBalance, String status) {}
 }

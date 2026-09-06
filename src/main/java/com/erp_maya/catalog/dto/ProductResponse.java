@@ -15,6 +15,10 @@ public record ProductResponse(
         BigDecimal cost,
         BigDecimal avgCost,
         String unit,
+        String purchaseUnit,
+        BigDecimal purchaseFactor,
+        String itemType,
+        Boolean tracksStock,
         BigDecimal minStock,
         String status
 ) {

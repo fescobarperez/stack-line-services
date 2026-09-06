@@ -56,9 +56,17 @@ public class Quote {
 
     private BigDecimal tax = BigDecimal.ZERO;
 
+    /** Tasa aplicada, congelada: si mañana cambia, este documento no. */
+    @Column(name = "tax_rate", nullable = false)
+    private BigDecimal taxRate = new BigDecimal("12");
+
     private BigDecimal total = BigDecimal.ZERO;
 
     private String status = "draft";
+
+    /** Proyecto generado a partir de esta cotización, si se convirtió. */
+    @Column(name = "project_id")
+    private Long projectId;
 
     private String notes;
 
@@ -139,6 +147,8 @@ public class Quote {
     public BigDecimal getSubtotal() { return subtotal; }
     public void setSubtotal(BigDecimal subtotal) { this.subtotal = subtotal; }
 
+    public BigDecimal getTaxRate() { return taxRate; }
+    public void setTaxRate(BigDecimal taxRate) { this.taxRate = taxRate; }
     public BigDecimal getTax() { return tax; }
     public void setTax(BigDecimal tax) { this.tax = tax; }
 
@@ -147,6 +157,9 @@ public class Quote {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public Long getProjectId() { return projectId; }
+    public void setProjectId(Long projectId) { this.projectId = projectId; }
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }

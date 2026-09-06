@@ -45,8 +45,26 @@ public class Product {
 
     private String unit;
 
+    /** Cómo se compra, si no coincide con cómo se almacena: 'Paquete', 'Caja'. */
+    @Column(name = "purchase_unit")
+    private String purchaseUnit;
+
+    /** Unidades de existencia por unidad de compra. 1 = se compra como se guarda. */
+    @Column(name = "purchase_factor", nullable = false)
+    private BigDecimal purchaseFactor = BigDecimal.ONE;
+
     @Column(name = "min_stock")
     private BigDecimal minStock;
+
+    /**
+     * sellable · raw_material · service. Solo `sellable` se ofrece en el POS;
+     * la materia prima se consume y el servicio (mano de obra) no lleva stock.
+     */
+    @Column(name = "item_type", nullable = false)
+    private String itemType = "sellable";
+
+    @Column(name = "tracks_stock", nullable = false)
+    private Boolean tracksStock = Boolean.TRUE;
 
     private String status;
 
@@ -82,11 +100,27 @@ public class Product {
     public BigDecimal getAvgCost() { return avgCost; }
     public void setAvgCost(BigDecimal avgCost) { this.avgCost = avgCost; }
 
+    public String getPurchaseUnit() { return purchaseUnit; }
+    public void setPurchaseUnit(String purchaseUnit) { this.purchaseUnit = purchaseUnit; }
+
+    public BigDecimal getPurchaseFactor() { return purchaseFactor; }
+    public void setPurchaseFactor(BigDecimal purchaseFactor) { this.purchaseFactor = purchaseFactor; }
+
+    /** Nunca nulo ni cero: sin factor válido, comprar es guardar tal cual. */
+    public BigDecimal purchaseFactorOrOne() {
+        return purchaseFactor != null && purchaseFactor.signum() > 0 ? purchaseFactor : BigDecimal.ONE;
+    }
+
     public String getUnit() { return unit; }
     public void setUnit(String unit) { this.unit = unit; }
 
     public BigDecimal getMinStock() { return minStock; }
     public void setMinStock(BigDecimal minStock) { this.minStock = minStock; }
+
+    public String getItemType() { return itemType; }
+    public void setItemType(String itemType) { this.itemType = itemType; }
+    public Boolean getTracksStock() { return tracksStock; }
+    public void setTracksStock(Boolean tracksStock) { this.tracksStock = tracksStock; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

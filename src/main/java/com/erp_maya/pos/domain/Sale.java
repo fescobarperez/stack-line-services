@@ -15,6 +15,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
@@ -36,6 +38,34 @@ public class Sale {
 
     @Column(name = "doc_number", nullable = false)
     private String docNumber;
+
+    /** DTE de SAT: FACT, NCRE, NDEB… Ver el comentario de la columna en la 045. */
+    @Column(name = "doc_type", nullable = false)
+    private String docType = "FACT";
+
+    @Column(name = "series")
+    private String series;
+
+    /** Documento que modifica esta NC/ND. SAT exige la referencia al original. */
+    @Column(name = "related_sale_id")
+    private Long relatedSaleId;
+
+    @Column(name = "reason")
+    private String reason;
+
+    /** Vendida al fiado: genera CxC y no entra al arqueo de caja. */
+    @Column(name = "is_credit", nullable = false)
+    private boolean credit = false;
+
+    /**
+     * Total con signo por tipo, generado por la base (ver la 045). Solo lectura:
+     * escribirlo desde aquí haría fallar el INSERT contra una columna GENERATED.
+     * `@Generated` hace que Hibernate lo relea tras insertar o actualizar; sin
+     * eso la respuesta del POS saldría con el campo en null recién creada.
+     */
+    @Generated(event = { EventType.INSERT, EventType.UPDATE })
+    @Column(name = "signed_total", insertable = false, updatable = false)
+    private BigDecimal signedTotal;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "client_id")
@@ -63,6 +93,10 @@ public class Sale {
 
     private BigDecimal tax = BigDecimal.ZERO;
 
+    /** Tasa aplicada, congelada: si mañana cambia, este documento no. */
+    @Column(name = "tax_rate", nullable = false)
+    private BigDecimal taxRate = new BigDecimal("12");
+
     private BigDecimal total = BigDecimal.ZERO;
 
     /** Descuento manual sobre el total y su % efectivo (lo que se autoriza). */
@@ -71,6 +105,10 @@ public class Sale {
 
     @Column(name = "discount_percent", nullable = false)
     private BigDecimal discountPercent = BigDecimal.ZERO;
+
+    /** Proyecto contra el que se emitió la venta, si pertenece a uno. */
+    @Column(name = "project_id")
+    private Long projectId;
 
     /** La autorización que permitió el descuento manual, si hizo falta. */
     @Column(name = "authorization_id")
@@ -101,6 +139,23 @@ public class Sale {
     public Long getCompanyId() { return companyId; }
     public void setCompanyId(Long companyId) { this.companyId = companyId; }
 
+    public String getDocType() { return docType; }
+    public void setDocType(String docType) { this.docType = docType; }
+
+    public String getSeries() { return series; }
+    public void setSeries(String series) { this.series = series; }
+
+    public Long getRelatedSaleId() { return relatedSaleId; }
+    public void setRelatedSaleId(Long relatedSaleId) { this.relatedSaleId = relatedSaleId; }
+
+    public boolean isCredit() { return credit; }
+    public void setCredit(boolean credit) { this.credit = credit; }
+
+    public String getReason() { return reason; }
+    public void setReason(String reason) { this.reason = reason; }
+
+    public BigDecimal getSignedTotal() { return signedTotal; }
+
     public String getDocNumber() { return docNumber; }
     public void setDocNumber(String docNumber) { this.docNumber = docNumber; }
 
@@ -112,6 +167,9 @@ public class Sale {
 
     public User getUser() { return user; }
     public void setUser(User user) { this.user = user; }
+
+    public Long getProjectId() { return projectId; }
+    public void setProjectId(Long projectId) { this.projectId = projectId; }
 
     public Long getAuthorizationId() { return authorizationId; }
     public void setAuthorizationId(Long authorizationId) { this.authorizationId = authorizationId; }
@@ -133,6 +191,8 @@ public class Sale {
     public BigDecimal getSubtotal() { return subtotal; }
     public void setSubtotal(BigDecimal subtotal) { this.subtotal = subtotal; }
 
+    public BigDecimal getTaxRate() { return taxRate; }
+    public void setTaxRate(BigDecimal taxRate) { this.taxRate = taxRate; }
     public BigDecimal getTax() { return tax; }
     public void setTax(BigDecimal tax) { this.tax = tax; }
 

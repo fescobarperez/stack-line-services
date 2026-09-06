@@ -44,7 +44,13 @@ public class Client {
     @Column(name = "payment_terms")
     private Integer paymentTerms;
 
-    private BigDecimal balance;
+    /**
+     * Saldo con el que el cliente ENTRA al sistema. No es el saldo actual:
+     * ese se deriva en v_client_balance (ver la 046). Lo único que no se
+     * puede calcular a partir de ventas y abonos.
+     */
+    @Column(name = "opening_balance", nullable = false)
+    private BigDecimal openingBalance = BigDecimal.ZERO;
 
     private String status;
 
@@ -86,8 +92,8 @@ public class Client {
     public Integer getPaymentTerms() { return paymentTerms; }
     public void setPaymentTerms(Integer paymentTerms) { this.paymentTerms = paymentTerms; }
 
-    public BigDecimal getBalance() { return balance; }
-    public void setBalance(BigDecimal balance) { this.balance = balance; }
+    public BigDecimal getOpeningBalance() { return openingBalance; }
+    public void setOpeningBalance(BigDecimal openingBalance) { this.openingBalance = openingBalance; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

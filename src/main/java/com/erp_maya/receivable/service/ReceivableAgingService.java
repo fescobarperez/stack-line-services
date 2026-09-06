@@ -63,6 +63,16 @@ public class ReceivableAgingService {
         for (Object[] r : payments.paidBySale(companyId)) {
             paidBySale.put((Long) r[0], bd(r[1]));
         }
+        // Abonos a cuenta: no bajan ningún documento en particular, pero sí el
+        // saldo del cliente. Sin ellos esta pantalla contradecía a Clientes.
+        Map<Long, BigDecimal> unappliedByClient = new HashMap<>();
+        Map<Long, String> unappliedNames = new HashMap<>();
+        for (Object[] r : payments.unappliedByClient(companyId)) {
+            if (r[0] == null) continue;
+            Long cid = ((Number) r[0]).longValue();
+            unappliedNames.put(cid, (String) r[1]);
+            unappliedByClient.put(cid, bd(r[2]));
+        }
 
         List<InvoiceRow> invoices = new ArrayList<>();
         BigDecimal totalReceivable = BigDecimal.ZERO;
@@ -109,22 +119,39 @@ public class ReceivableAgingService {
             acc.buckets.merge(bucket, outstanding, BigDecimal::add);
         }
 
+        // Un cliente puede tener saldo a favor sin ningún documento abierto —el
+        // anticipo puro—, así que hay que recorrer los abonos a cuenta aparte y
+        // no solo restarlos a quienes ya salieron del bucle de documentos.
+        BigDecimal unapplied = BigDecimal.ZERO;
+        for (Map.Entry<Long, BigDecimal> e : unappliedByClient.entrySet()) {
+            unapplied = unapplied.add(e.getValue());
+            // Si no tenía documentos abiertos igual entra: su saldo es a favor y
+            // omitirlo haría que esta pantalla no cuadrara con la de Clientes.
+            ClientAcc acc = byClient.computeIfAbsent(e.getKey(),
+                    k -> new ClientAcc(unappliedNames.get(k)));
+            acc.unapplied = e.getValue();
+            acc.total = acc.total.subtract(e.getValue());
+        }
+
         List<BucketRow> summary = new ArrayList<>();
         for (String b : BUCKETS) {
             summary.add(new BucketRow(b, bucketCount.get(b)[0], bucketTotal.get(b)));
         }
 
         List<ClientRow> clientRows = byClient.entrySet().stream()
-                .map(e -> new ClientRow(e.getKey(), e.getValue().name, e.getValue().total, e.getValue().buckets))
+                .map(e -> new ClientRow(e.getKey(), e.getValue().name, e.getValue().total,
+                        e.getValue().unapplied, e.getValue().buckets))
                 .sorted((a, b) -> b.total().compareTo(a.total()))
                 .toList();
 
-        return new Aging(totalReceivable, overdue, invoices.size(), criticalCount, summary, invoices, clientRows);
+        return new Aging(totalReceivable, unapplied, totalReceivable.subtract(unapplied),
+                overdue, invoices.size(), criticalCount, summary, invoices, clientRows);
     }
 
     private static final class ClientAcc {
         final String name;
         BigDecimal total = BigDecimal.ZERO;
+        BigDecimal unapplied = BigDecimal.ZERO;
         final Map<String, BigDecimal> buckets = new LinkedHashMap<>();
         ClientAcc(String name) { this.name = name; }
     }

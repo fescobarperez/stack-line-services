@@ -1,6 +1,8 @@
 package com.erp_maya.marketing.controller;
 
 import com.erp_maya.marketing.dto.PromotionDtos;
+import com.erp_maya.marketing.dto.PromotionEngineDtos;
+import com.erp_maya.marketing.service.PromotionEngineService;
 import com.erp_maya.marketing.service.PromotionService;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.Body;
@@ -18,10 +20,22 @@ import java.util.List;
 public class PromotionController {
 
     private final PromotionService service;
+    private final PromotionEngineService engine;
 
-    public PromotionController(PromotionService service) {
+    public PromotionController(PromotionService service, PromotionEngineService engine) {
+        this.engine = engine;
         this.service = service;
     }
+    /**
+     * Evalúa el carrito contra las promociones vigentes. El POS ya no calcula
+     * descuentos: los pide aquí y recibe el reparto por renglón listo para
+     * persistir en la venta.
+     */
+    @Post("/apply")
+    public PromotionEngineDtos.ApplyResponse apply(@Valid @Body PromotionEngineDtos.ApplyRequest request) {
+        return engine.apply(request);
+    }
+
 
     @Get
     public List<PromotionDtos.Response> list() {

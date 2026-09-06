@@ -68,19 +68,46 @@ public class StockService {
                 .orElseThrow(() -> new ResourceNotFoundException("Producto " + req.productId() + " no encontrado"));
         Branch branch = branches.findByIdAndCompanyId(req.branchId(), tenant.getCompanyId())
                 .orElseThrow(() -> new ResourceNotFoundException("Sucursal " + req.branchId() + " no encontrada"));
+        // Un ajuste es una acción deliberada del usuario sobre una existencia:
+        // si el producto no lleva, es un error que hay que decir, no ignorar.
+        if (!tracksStock(product)) {
+            throw new IllegalStateException(
+                    product.getName() + " no lleva existencias: no se le puede ajustar inventario");
+        }
         StockMovement m = applyMovement(product, branch, null, "adjustment", req.quantity(),
                 "adjustment", req.note(), req.batch());
         return toMovement(m);
     }
 
     /**
+     * ¿Este producto lleva existencias? Un servicio —mano de obra, un anticipo
+     * facturado— no tiene kardex ni bodega. `tracks_stock` llegó en la 039 pero
+     * nadie lo miraba: hasta ahora vender un servicio descontaba existencias de
+     * algo que no existe.
+     *
+     * Nulo se trata como que SÍ lleva: la columna es NOT NULL DEFAULT TRUE, y
+     * ante la duda es mejor mover el kardex de más que perder un movimiento.
+     */
+    private static boolean tracksStock(Product p) {
+        return !Boolean.FALSE.equals(p.getTracksStock());
+    }
+
+    /**
      * Registra un movimiento en el kardex y actualiza la existencia de la
      * (producto, sucursal, lote). qty con signo: negativo descuenta.
      * Reutilizado por POS, compras, traslados y toma física.
+     *
+     * Devuelve null si el producto no lleva existencias: no hay movimiento que
+     * registrar. Quien necesite el movimiento —imputar un costo al proyecto,
+     * por ejemplo— debe descartar antes esos productos, no confiar en que
+     * siempre viene uno de vuelta.
      */
     @Transactional
     public StockMovement applyMovement(Product product, Branch branch, User user, String type,
                                        BigDecimal qty, String refType, String refId, String batch) {
+        if (!tracksStock(product)) {
+            return null;
+        }
         Long companyId = tenant.getCompanyId();
         String lot = batch != null ? batch : "";
 

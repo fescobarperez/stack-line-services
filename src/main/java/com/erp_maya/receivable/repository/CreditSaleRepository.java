@@ -12,11 +12,15 @@ import java.util.List;
 public interface CreditSaleRepository extends JpaRepository<Sale, Long> {
 
     /**
-     * [ saleId, docNumber, clientId, clientName, saleDate, total, paymentTerms ] de las ventas a
-     * crédito (método de pago que contiene "cred"), ordenadas por fecha.
+     * [ saleId, docNumber, clientId, clientName, saleDate, total, paymentTerms ] de las ventas
+     * a crédito, ordenadas por fecha.
+     *
+     * Antes esto se resolvía con LIKE '%cred%' sobre el método de pago: un
+     * espacio de más o una tilde sacaban la venta de cuentas por cobrar. Desde
+     * la 048 hay una columna que lo dice.
      */
     @Query("SELECT s.id, s.docNumber, s.client.id, s.client.name, s.saleDate, s.total, s.client.paymentTerms "
             + "FROM Sale s WHERE s.companyId = :companyId AND s.client IS NOT NULL "
-            + "AND LOWER(s.paymentMethod) LIKE '%cred%' ORDER BY s.saleDate")
+            + "AND s.credit = TRUE AND s.status <> 'cancelled' ORDER BY s.saleDate")
     List<Object[]> creditSales(Long companyId);
 }

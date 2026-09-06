@@ -16,4 +16,7 @@ public interface ClientRepository extends JpaRepository<Client, Long> {
     Page<Client> findByCompanyIdAndNameContainsIgnoreCase(Long companyId, String name, Pageable pageable);
 
     Optional<Client> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Búsqueda por NIT: identifica al cliente sin depender del nombre escrito. */
+    Optional<Client> findByCompanyIdAndNit(Long companyId, String nit);
 }

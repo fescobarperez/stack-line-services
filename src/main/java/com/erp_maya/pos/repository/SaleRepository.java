@@ -14,4 +14,7 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
     Page<Sale> findByCompanyIdOrderBySaleDateDesc(Long companyId, Pageable pageable);
 
     Optional<Sale> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Ventas emitidas contra un proyecto: base del facturado. */
+    java.util.List<Sale> findByCompanyIdAndProjectId(Long companyId, Long projectId);
 }

@@ -12,11 +12,12 @@ public final class PayableDtos {
 
     @Serdeable
     public record InvoiceRequest(String docNumber, @NotNull Long supplierId, Long purchaseOrderId,
+                                 Long projectId,
                                  LocalDate invoiceDate, LocalDate dueDate, @NotNull BigDecimal amount) {}
 
     @Serdeable
     public record InvoiceResponse(Long id, String docNumber, Long supplierId, String supplierName,
-                                  Long purchaseOrderId, LocalDate invoiceDate, LocalDate dueDate,
+                                  Long purchaseOrderId, Long projectId, LocalDate invoiceDate, LocalDate dueDate,
                                   BigDecimal amount, BigDecimal paidAmount, String status) {}
 
     @Serdeable

@@ -56,6 +56,10 @@ public class SaleItem {
     @Column(name = "line_total", nullable = false)
     private BigDecimal lineTotal;
 
+    /** Texto del renglón cuando no hay producto: anticipo, avance, mano de obra. */
+    @Column(name = "concept")
+    private String concept;
+
     public String getDiscountSource() { return discountSource; }
     public void setDiscountSource(String discountSource) { this.discountSource = discountSource; }
     public Long getPromotionId() { return promotionId; }
@@ -81,6 +85,9 @@ public class SaleItem {
 
     public BigDecimal getDiscount() { return discount; }
     public void setDiscount(BigDecimal discount) { this.discount = discount; }
+
+    public String getConcept() { return concept; }
+    public void setConcept(String concept) { this.concept = concept; }
 
     public BigDecimal getLineTotal() { return lineTotal; }
     public void setLineTotal(BigDecimal lineTotal) { this.lineTotal = lineTotal; }

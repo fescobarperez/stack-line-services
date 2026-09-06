@@ -4,6 +4,8 @@ import com.erp_maya.catalog.domain.Product;
 import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.settings.service.TaxService;
+import com.erp_maya.partner.domain.Client;
 import com.erp_maya.partner.repository.ClientRepository;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteHistory;
@@ -20,24 +22,26 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 @Singleton
 public class QuoteService {
-
-    private static final BigDecimal IVA_FACTOR = new BigDecimal("12").divide(new BigDecimal("112"), 10, RoundingMode.HALF_UP);
 
     private final QuoteRepository quotes;
     private final QuoteHistoryRepository history;
     private final ProductRepository products;
     private final ClientRepository clients;
+    private final TaxService taxService;
     private final TenantContext tenant;
 
     public QuoteService(QuoteRepository quotes, QuoteHistoryRepository history, ProductRepository products,
-                        ClientRepository clients, TenantContext tenant) {
+                        ClientRepository clients, TenantContext tenant,
+                       TaxService taxService) {
         this.quotes = quotes;
         this.history = history;
         this.products = products;
         this.clients = clients;
+        this.taxService = taxService;
         this.tenant = tenant;
     }
 
@@ -84,7 +88,11 @@ public class QuoteService {
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
         quote.setStatus(rfq ? "solicitada" : "borrador");
-        if (req.clientId() != null) {
+        // Cliente de la cotización. Sin esto se guardaba como texto suelto y
+        // nunca quedaba asociada, que es lo que impedía convertirla en proyecto.
+        if (!rfq) {
+            resolveOrCreateClient(companyId, req).ifPresent(quote::setClient);
+        } else if (req.clientId() != null) {
             clients.findByIdAndCompanyId(req.clientId(), companyId).ifPresent(quote::setClient);
         }
 
@@ -109,7 +117,10 @@ public class QuoteService {
             quote.addItem(item);
             total = total.add(lineTotal);
         }
-        BigDecimal tax = total.multiply(IVA_FACTOR).setScale(2, RoundingMode.HALF_UP);
+        // La tasa sale de la configuración de la empresa, no de una constante.
+        BigDecimal rate = taxService.rate();
+        BigDecimal tax = total.multiply(TaxService.factorOverGross(rate)).setScale(2, RoundingMode.HALF_UP);
+        quote.setTaxRate(rate);
         quote.setTotal(total);
         quote.setTax(tax);
         quote.setSubtotal(total.subtract(tax));
@@ -132,6 +143,36 @@ public class QuoteService {
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
     }
 
+    /**
+     * 1. Si viene clientId, ese manda.
+     * 2. Si no, se busca por NIT: identifica al cliente sin depender de cómo
+     *    se escribiera el nombre.
+     * 3. Si tampoco existe, se crea con lo capturado en el formulario.
+     */
+    private Optional<Client> resolveOrCreateClient(Long companyId, QuoteDtos.Request req) {
+        if (req.clientId() != null) {
+            Optional<Client> byId = clients.findByIdAndCompanyId(req.clientId(), companyId);
+            if (byId.isPresent()) return byId;
+        }
+        String nit = req.clientNit() == null ? "" : req.clientNit().trim();
+        if (!nit.isBlank() && !"CF".equalsIgnoreCase(nit)) {
+            Optional<Client> byNit = clients.findByCompanyIdAndNit(companyId, nit);
+            if (byNit.isPresent()) return byNit;
+        }
+        // Sin nombre no hay cliente que crear; la cotización queda sin asociar.
+        if (req.clientName() == null || req.clientName().isBlank()) return Optional.empty();
+
+        Client c = new Client();
+        c.setCompanyId(companyId);
+        c.setName(req.clientName().trim());
+        c.setNit(nit.isBlank() ? null : nit);
+        c.setEmail(req.clientEmail());
+        c.setPhone(req.clientContact());
+        c.setClientType("Consumidor final");
+        c.setStatus("active");
+        return Optional.of(clients.save(c));
+    }
+
     private static QuoteDtos.Response toResponse(Quote q, List<QuoteHistory> hist) {
         var items = q.getItems().stream().map(i -> new QuoteDtos.ItemResponse(
                 i.getId(), i.getProduct() != null ? i.getProduct().getId() : null,
@@ -145,7 +186,8 @@ public class QuoteService {
                 q.getSupplierName(), q.getSupplierNit(), q.getSupplierEmail(), q.getSupplierContact(),
                 q.getQuoteDate(), q.getValidUntil(), q.getDeadline(),
                 q.getLeadTime(), q.getPaymentTerms(), q.getCreatedBy(),
-                q.getSubtotal(), q.getTax(), q.getTotal(), q.getStatus(), q.getNotes(),
+                q.getProjectId(),
+                q.getSubtotal(), q.getTax(), q.getTaxRate(), q.getTotal(), q.getStatus(), q.getNotes(),
                 items, historyOut);
     }
 }

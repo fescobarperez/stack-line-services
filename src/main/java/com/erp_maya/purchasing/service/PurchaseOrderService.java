@@ -5,6 +5,8 @@ import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
 import com.erp_maya.company.repository.BranchRepository;
+import com.erp_maya.inventory.repository.ProductStockRepository;
+import com.erp_maya.inventory.domain.ProductStock;
 import com.erp_maya.inventory.service.StockService;
 import com.erp_maya.partner.repository.SupplierRepository;
 import com.erp_maya.purchasing.domain.PurchaseOrder;
@@ -17,6 +19,7 @@ import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,11 +32,14 @@ public class PurchaseOrderService {
     private final SupplierRepository suppliers;
     private final BranchRepository branches;
     private final StockService stockService;
+    private final ProductStockRepository stock;
     private final TenantContext tenant;
 
     public PurchaseOrderService(PurchaseOrderRepository orders, ProductRepository products,
                                 SupplierRepository suppliers, BranchRepository branches,
-                                StockService stockService, TenantContext tenant) {
+                                StockService stockService, ProductStockRepository stock,
+                                TenantContext tenant) {
+        this.stock = stock;
         this.orders = orders;
         this.products = products;
         this.suppliers = suppliers;
@@ -62,6 +68,9 @@ public class PurchaseOrderService {
                 ? req.docNumber() : "OC-" + Instant.now().toEpochMilli());
         po.setOrderDate(req.orderDate());
         po.setNotes(req.notes());
+        // Imputar la OC a un proyecto la cuenta como comprometido hasta que
+        // se facture; la factura es la que pasa a ejecutado.
+        po.setProjectId(req.projectId());
         po.setStatus("pending");
         if (req.supplierId() != null) {
             suppliers.findByIdAndCompanyId(req.supplierId(), companyId).ifPresent(po::setSupplier);
@@ -131,13 +140,23 @@ public class PurchaseOrderService {
                 throw new IllegalStateException("El renglón " + item.getId() + " sólo tiene " + pending
                         + " unidad(es) pendiente(s); no se pueden recibir " + delta + ".");
             }
-            stockService.applyMovement(item.getProduct(), po.getBranch(), null, "reception",
-                    delta, "purchase", po.getDocNumber(), "");
-            item.setQtyReceived(item.getQtyReceived().add(delta));
-            // Actualiza el costo actual del producto con el costo de compra.
-            if (item.getProduct() != null) {
-                item.getProduct().setAvgCost(item.getUnitCost());
+            // La orden se captura como viene la factura del proveedor —1 paquete
+            // a Q25— pero la bodega guarda tornillos. Aquí se traduce: la
+            // cantidad se multiplica por el factor y el costo se divide entre él.
+            Product product = item.getProduct();
+            BigDecimal factor = product != null ? product.purchaseFactorOrOne() : BigDecimal.ONE;
+            BigDecimal qtyStock = delta.multiply(factor);
+            BigDecimal costPerStockUnit = item.getUnitCost()
+                    .divide(factor, 6, RoundingMode.HALF_UP);
+
+            // El promedio se calcula ANTES de mover el kardex: necesita la
+            // existencia previa a esta recepción.
+            if (product != null) {
+                product.setAvgCost(newAverageCost(product, qtyStock, costPerStockUnit));
             }
+            stockService.applyMovement(product, po.getBranch(), null, "reception",
+                    qtyStock, "purchase", po.getDocNumber(), "");
+            item.setQtyReceived(item.getQtyReceived().add(delta));
         }
 
         boolean allReceived = po.getItems().stream()
@@ -146,6 +165,32 @@ public class PurchaseOrderService {
                 .anyMatch(i -> i.getQtyReceived().compareTo(BigDecimal.ZERO) > 0);
         po.setStatus(allReceived ? "received" : anyReceived ? "partial" : po.getStatus());
         return toResponse(orders.update(po));
+    }
+
+    /**
+     * Promedio móvil ponderado sobre la existencia previa.
+     *
+     * Antes esto era `setAvgCost(unitCost)`: el ÚLTIMO costo, sobrescrito en
+     * cada compra. Con eso, comprar 100 tornillos a Q0.25 y después 100 a
+     * Q0.30 dejaba los 164 restantes valuados a Q0.30 y le cargaba de más a
+     * cada proyecto que los consumiera. Es la cifra con la que
+     * ProjectService descarga el consumo de materia prima.
+     *
+     * Sin existencia previa —o con existencia negativa por un descuadre— el
+     * promedio es simplemente el costo de esta compra: promediar contra una
+     * base que no existe daría un número inventado.
+     */
+    private BigDecimal newAverageCost(Product product, BigDecimal qtyIn, BigDecimal costIn) {
+        BigDecimal onHand = stock.findByCompanyIdAndProductId(tenant.getCompanyId(), product.getId())
+                .stream().map(ProductStock::getQuantity)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal prevAvg = product.getAvgCost();
+        if (onHand.signum() <= 0 || prevAvg == null || prevAvg.signum() <= 0) {
+            return costIn.setScale(4, RoundingMode.HALF_UP);
+        }
+        return onHand.multiply(prevAvg).add(qtyIn.multiply(costIn))
+                .divide(onHand.add(qtyIn), 4, RoundingMode.HALF_UP);
     }
 
     private PurchaseOrder find(Long id) {
@@ -163,6 +208,7 @@ public class PurchaseOrderService {
                 po.getSupplier() != null ? po.getSupplier().getName() : null,
                 po.getBranch() != null ? po.getBranch().getId() : null,
                 po.getBranch() != null ? po.getBranch().getName() : null,
+                po.getProjectId(),
                 po.getOrderDate(), po.getTotal(), po.getStatus(), po.getNotes(), items);
     }
 }

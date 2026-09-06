@@ -14,4 +14,6 @@ public interface PurchaseInvoiceRepository extends JpaRepository<PurchaseInvoice
     Page<PurchaseInvoice> findByCompanyIdOrderByInvoiceDateDesc(Long companyId, Pageable pageable);
 
     Optional<PurchaseInvoice> findByIdAndCompanyId(Long id, Long companyId);
+
+    java.util.List<PurchaseInvoice> findByCompanyIdAndProjectId(Long companyId, Long projectId);
 }
