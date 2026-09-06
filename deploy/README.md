@@ -29,7 +29,7 @@ base no debe verse desde fuera.
 ## 2. Docker
 
 ```bash
-# Ubuntu 22.04/24.04
+# Ubuntu 26.04, 24.04 o 22.04 (todas soportadas por Docker)
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER && exec newgrp docker
 ```
