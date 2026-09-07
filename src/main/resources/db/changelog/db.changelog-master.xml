@@ -82,5 +82,6 @@
     <include file="changes/051_invoice_custody.sql" relativeToChangelogFile="true"/>
     <include file="changes/052_payment_bank.sql" relativeToChangelogFile="true"/>
     <include file="changes/053_posting_foundation.sql" relativeToChangelogFile="true"/>
+    <include file="changes/054_seed_faltante.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
