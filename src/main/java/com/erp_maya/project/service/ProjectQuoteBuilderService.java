@@ -80,7 +80,14 @@ public class ProjectQuoteBuilderService {
         quote.setCompanyId(companyId);
         quote.setPartyType("client");
         quote.setDocNumber("COT-" + Instant.now().toEpochMilli());
-        quote.setQuoteDate(req.quoteDate() != null ? req.quoteDate() : LocalDate.now());
+        LocalDate quoteDate = req.quoteDate() != null ? req.quoteDate() : LocalDate.now();
+        if (req.validUntil() == null) {
+            throw new IllegalStateException("Una cotización a cliente necesita fecha de expiración");
+        }
+        if (req.validUntil().isBefore(quoteDate)) {
+            throw new IllegalStateException("La fecha de expiración no puede ser anterior a la fecha de cotización");
+        }
+        quote.setQuoteDate(quoteDate);
         quote.setValidUntil(req.validUntil());
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
@@ -169,6 +176,93 @@ public class ProjectQuoteBuilderService {
 
         quoteHistory.save(new QuoteHistory(companyId, saved.getId(),
                 "Cotización creada desde materiales del proyecto", req.createdBy()));
+        return saved.getId();
+    }
+
+    @Transactional
+    public Long appendToDraft(Long projectId, Long quoteId, ProjectQuoteBuilderDtos.Request req) {
+        Long companyId = tenant.getCompanyId();
+        projects.findByIdAndCompanyId(projectId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Proyecto " + projectId + " no encontrado"));
+        Quote quote = quotes.findByIdAndCompanyId(quoteId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
+        if (!"borrador".equalsIgnoreCase(quote.getStatus()) && !"draft".equalsIgnoreCase(quote.getStatus())) {
+            throw new IllegalStateException("Solo se pueden agregar líneas a cotizaciones en borrador");
+        }
+        if (!projectId.equals(quote.getProjectId())) {
+            throw new IllegalStateException("La cotización no pertenece a este proyecto");
+        }
+
+        Map<Long, ProjectMaterial> pool = materials
+                .findByCompanyIdAndProjectIdAndQuoteIdIsNullOrderByIdAsc(companyId, projectId)
+                .stream().collect(Collectors.toMap(ProjectMaterial::getId, Function.identity()));
+        List<QuoteItem> affectedItems = new java.util.ArrayList<>();
+        BigDecimal total = quote.getItems().stream()
+                .map(item -> item.getLineTotal() == null ? BigDecimal.ZERO : item.getLineTotal())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        for (ProjectQuoteBuilderDtos.LineRequest line : req.lines()) {
+            List<ProjectMaterial> lineMaterials = line.materialIds().stream().map(materialId -> {
+                ProjectMaterial material = pool.get(materialId);
+                if (material == null) {
+                    throw new IllegalStateException("El material " + materialId + " no está disponible en este proyecto");
+                }
+                return material;
+            }).toList();
+            if (lineMaterials.isEmpty()) {
+                throw new IllegalStateException("Cada línea debe tener al menos un material");
+            }
+
+            BigDecimal sellPrice = line.sellPrice() != null
+                    ? line.sellPrice().setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            QuoteItem item;
+            if (line.targetItemId() != null) {
+                item = quote.getItems().stream()
+                        .filter(existing -> line.targetItemId().equals(existing.getId()))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException("La línea " + line.targetItemId() + " no pertenece a la cotización"));
+                BigDecimal nextLineTotal = (item.getLineTotal() == null ? BigDecimal.ZERO : item.getLineTotal()).add(sellPrice);
+                BigDecimal quantity = item.getQuantity() == null ? BigDecimal.ONE : item.getQuantity();
+                BigDecimal discountFactor = BigDecimal.ONE.subtract(
+                        (item.getDiscount() == null ? BigDecimal.ZERO : item.getDiscount())
+                                .divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
+                item.setUnitPrice(nextLineTotal.divide(quantity.multiply(discountFactor), 2, RoundingMode.HALF_UP));
+                item.setLineTotal(nextLineTotal.setScale(2, RoundingMode.HALF_UP));
+            } else {
+                String description = resolveDescription(companyId, line);
+                item = new QuoteItem();
+                item.setDescription(description);
+                item.setSourceGroupId(line.sourceGroupId());
+                item.setItemName(description);
+                item.setUom(line.uom() != null ? line.uom() : "servicio");
+                item.setQuantity(BigDecimal.ONE);
+                item.setUnitPrice(sellPrice);
+                item.setDiscount(BigDecimal.ZERO);
+                item.setLineTotal(sellPrice);
+                quote.addItem(item);
+            }
+            affectedItems.add(item);
+            total = total.add(sellPrice);
+        }
+
+        BigDecimal rate = quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate();
+        BigDecimal tax = total.multiply(rate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+        quote.setTaxRate(rate);
+        quote.setSubtotal(total);
+        quote.setTax(tax);
+        quote.setTotal(total.add(tax).setScale(2, RoundingMode.HALF_UP));
+        Quote saved = quotes.update(quote);
+        int index = 0;
+        for (ProjectQuoteBuilderDtos.LineRequest line : req.lines()) {
+            QuoteItem savedItem = affectedItems.get(index++);
+            for (Long materialId : line.materialIds()) {
+                ProjectMaterial material = pool.get(materialId);
+                material.setQuoteId(saved.getId());
+                material.setQuoteItemId(savedItem.getId());
+                materials.update(material);
+            }
+        }
+        quoteHistory.save(new QuoteHistory(companyId, saved.getId(),
+                "Líneas agregadas a cotización existente", req.createdBy()));
         return saved.getId();
     }
 

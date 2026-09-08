@@ -30,7 +30,7 @@ public final class ProjectQuoteBuilderDtos {
      *   disponibles: quote_id IS NULL).
      */
     @Serdeable
-    public record LineRequest(String description, Long sourceGroupId, String uom,
+    public record LineRequest(String description, Long sourceGroupId, Long targetItemId, String uom,
                               @NotNull BigDecimal sellPrice,
                               @NotEmpty List<Long> materialIds) {}
 

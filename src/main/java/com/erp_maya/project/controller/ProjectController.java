@@ -41,6 +41,12 @@ public class ProjectController {
         return Map.of("quoteId", quoteBuilder.createFromMaterials(id, request));
     }
 
+    @Post("/{id}/quotes/{quoteId}/lines")
+    public Map<String, Long> appendQuoteLines(Long id, Long quoteId,
+                                               @Valid @Body ProjectQuoteBuilderDtos.Request request) {
+        return Map.of("quoteId", quoteBuilder.appendToDraft(id, quoteId, request));
+    }
+
     @Get
     public List<ProjectDtos.Response> list() {
         return service.list();
