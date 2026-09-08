@@ -91,5 +91,6 @@
     <include file="changes/060_quote_charges.sql" relativeToChangelogFile="true"/>
     <include file="changes/061_quote_payment_terms.sql" relativeToChangelogFile="true"/>
     <include file="changes/062_quote_pricing.sql" relativeToChangelogFile="true"/>
+    <include file="changes/054_seed_faltante.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
