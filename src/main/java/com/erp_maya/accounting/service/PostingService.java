@@ -52,15 +52,26 @@ public class PostingService {
     }
 
     /** Un renglón por escribir. `accountKey` es la clave del mapeo, no un código. */
-    public record Line(String accountKey, BigDecimal debit, BigDecimal credit,
+    /**
+     * Un renglón por escribir. Normalmente la cuenta se resuelve por
+     * `accountKey` (la clave del mapeo). Si `accountId` viene informado, esa
+     * cuenta gana: es la que el usuario eligió en el propio documento —p.ej. la
+     * caja concreta de un cobro en efectivo— y no la cuenta por defecto del rol.
+     */
+    public record Line(String accountKey, Long accountId, BigDecimal debit, BigDecimal credit,
                        String description, Long costCenterId) {
 
         public static Line debit(String key, BigDecimal amount, String desc, Long cc) {
-            return new Line(key, amount, BigDecimal.ZERO, desc, cc);
+            return new Line(key, null, amount, BigDecimal.ZERO, desc, cc);
         }
 
         public static Line credit(String key, BigDecimal amount, String desc, Long cc) {
-            return new Line(key, BigDecimal.ZERO, amount, desc, cc);
+            return new Line(key, null, BigDecimal.ZERO, amount, desc, cc);
+        }
+
+        /** Débito contra una cuenta explícita; `key` queda como respaldo si el id no resuelve. */
+        public static Line debitAccount(String key, Long accountId, BigDecimal amount, String desc, Long cc) {
+            return new Line(key, accountId, amount, BigDecimal.ZERO, desc, cc);
         }
     }
 
@@ -96,7 +107,9 @@ public class PostingService {
         BigDecimal debit = BigDecimal.ZERO;
         BigDecimal credit = BigDecimal.ZERO;
         for (Line l : real) {
-            Account acc = account(l.accountKey(), companyId);
+            Account acc = l.accountId() != null
+                    ? accountById(l.accountId(), companyId)
+                    : account(l.accountKey(), companyId);
             JournalEntryLine jl = new JournalEntryLine();
             jl.setCompanyId(companyId);
             jl.setAccount(acc);
@@ -189,6 +202,23 @@ public class PostingService {
                 .filter(a -> a.getCompanyId().equals(companyId))
                 .orElseThrow(() -> new IllegalStateException(
                         "La cuenta configurada en '" + key + "' (id " + id + ") ya no existe."));
+    }
+
+    /**
+     * La cuenta que el usuario eligió explícitamente en el documento. Se exige
+     * que sea de detalle (allows_entries): postear contra una cuenta de
+     * agrupación deja el mayor sin el desglose que la cuenta padre resume.
+     */
+    private Account accountById(Long accountId, Long companyId) {
+        Account acc = accounts.findById(accountId)
+                .filter(a -> a.getCompanyId().equals(companyId))
+                .orElseThrow(() -> new IllegalStateException(
+                        "La cuenta seleccionada (id " + accountId + ") no existe."));
+        if (Boolean.FALSE.equals(acc.getAllowsEntries())) {
+            throw new IllegalStateException(
+                    "La cuenta " + acc.getCode() + " no admite partidas directas; elige una cuenta de detalle.");
+        }
+        return acc;
     }
 
     /**

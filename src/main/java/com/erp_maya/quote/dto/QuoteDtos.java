@@ -21,10 +21,12 @@ public final class QuoteDtos {
 
     @Serdeable
     public record Request(String docNumber, String partyType,
+                          Long projectId,
                           Long clientId, String clientName, String clientNit, String clientEmail, String clientContact,
                           String supplierName, String supplierNit, String supplierEmail, String supplierContact,
                           LocalDate quoteDate, LocalDate validUntil, LocalDate deadline,
                           String leadTime, String paymentTerms, String createdBy, String notes,
+                          String profitCalcType, BigDecimal profitValue,
                           @NotEmpty @Valid List<ItemRequest> items) {}
 
     @Serdeable
@@ -42,6 +44,7 @@ public final class QuoteDtos {
                            String leadTime, String paymentTerms, String createdBy,
                            Long projectId,
                            BigDecimal subtotal, BigDecimal tax, BigDecimal taxRate,
+                           String profitCalcType, BigDecimal profitValue, BigDecimal profitAmount,
                            BigDecimal total, String status, String notes,
                            List<ItemResponse> items, List<HistoryEntry> history) {}
 

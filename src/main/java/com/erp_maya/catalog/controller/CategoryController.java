@@ -45,6 +45,12 @@ public class CategoryController {
         return service.update(id, request);
     }
 
+    @Post("/{id}/copy")
+    @Status(HttpStatus.CREATED)
+    public CategoryResponse copy(Long id) {
+        return service.copy(id);
+    }
+
     @Delete("/{id}")
     @Status(HttpStatus.NO_CONTENT)
     public void delete(Long id) {

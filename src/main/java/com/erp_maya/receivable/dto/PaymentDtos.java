@@ -12,15 +12,20 @@ public final class PaymentDtos {
     private PaymentDtos() {}
 
     @Serdeable
-    /** `bankAccountId` es obligatorio en transferencia y depósito; en los demás sobra. */
+    /**
+     * `bankAccountId` es obligatorio en transferencia y depósito; en los demás sobra.
+     * `cashAccountId` es opcional: la cuenta de caja concreta a la que entra un
+     * cobro en efectivo o cheque. Si no viene, se usa la cuenta por defecto del
+     * rol posting.cash.
+     */
     public record Request(@NotNull Long clientId, Long saleId, Long projectId, @NotNull BigDecimal amount,
                           LocalDate paymentDate, String method, String reference, String notes,
-                          Long bankAccountId) {}
+                          Long bankAccountId, Long cashAccountId, Long quoteId) {}
 
     @Serdeable
     public record Response(Long id, Long clientId, String clientName, Long saleId, Long projectId,
                            BigDecimal amount,
                            LocalDate paymentDate, String method, String reference, String notes,
                            String receiptNumber, Instant receiptPrintedAt,
-                           Long bankAccountId, Long bankMovementId) {}
+                           Long bankAccountId, Long bankMovementId, Long quoteId) {}
 }

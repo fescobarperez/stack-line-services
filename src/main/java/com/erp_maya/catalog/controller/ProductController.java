@@ -1,7 +1,9 @@
 package com.erp_maya.catalog.controller;
 
+import com.erp_maya.catalog.dto.ProductCategoryRequest;
 import com.erp_maya.catalog.dto.ProductRequest;
 import com.erp_maya.catalog.dto.ProductResponse;
+import com.erp_maya.catalog.dto.ProductSupplierDtos;
 import com.erp_maya.catalog.service.ProductService;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.data.model.Page;
@@ -42,6 +44,17 @@ public class ProductController {
     @Status(HttpStatus.CREATED)
     public ProductResponse create(@Valid @Body ProductRequest request) {
         return service.create(request);
+    }
+
+    @Post("/{id}/suppliers")
+    @Status(HttpStatus.CREATED)
+    public ProductResponse addSupplier(Long id, @Valid @Body ProductSupplierDtos.Request request) {
+        return service.addSupplier(id, request);
+    }
+
+    @Put("/{id}/category")
+    public ProductResponse moveToCategory(Long id, @Valid @Body ProductCategoryRequest request) {
+        return service.moveToCategory(id, request.categoryId());
     }
 
     @Put("/{id}")

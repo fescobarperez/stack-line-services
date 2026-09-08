@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 @Serdeable
 public record CategoryRequest(
         @NotBlank String name,
-        String icon
+        String icon,
+        Long parentId
 ) {
 }

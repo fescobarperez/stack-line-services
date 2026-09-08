@@ -39,11 +39,24 @@ public class ProjectDtos {
     @Serdeable
     public record PaymentResponse(Long id, BigDecimal amount, LocalDate paymentDate,
                                   String method, String reference, String receiptNumber,
-                                  java.time.Instant receiptPrintedAt) {}
+                                  java.time.Instant receiptPrintedAt, Long quoteId) {}
 
     @Serdeable
     public record CostResponse(Long id, String source, Long refId, String description,
                                BigDecimal amount, LocalDate costDate) {}
+
+    /** Un cargo de la cotización, para el desglose de gastos en el proyecto. */
+    @Serdeable
+    public record QuoteChargeRef(String category, String description, String calcType,
+                                 BigDecimal computedAmount) {}
+
+    @Serdeable
+    public record QuoteRef(Long quoteId, String docNumber, String status,
+                           BigDecimal operatingCost, BigDecimal profitAmount,
+                           BigDecimal subtotal, BigDecimal taxRate, BigDecimal tax, BigDecimal total,
+                           Boolean included,
+                           BigDecimal materialsCost, List<QuoteChargeRef> charges,
+                           BigDecimal expenseTotal) {}
 
     /**
      * Las cuatro cifras del seguimiento. Con una sola de gasto no se ve venir
@@ -69,5 +82,14 @@ public class ProjectDtos {
                            BigDecimal executedNotInvoiced,
                            String closeNote,
                            List<CostResponse> costs,
-                           List<PaymentResponse> payments) {}
+                           List<PaymentResponse> payments,
+                           BigDecimal materialsCost,
+                           /** Costo de materiales en cotizaciones aprobadas (firme). */
+                           BigDecimal materialsCostApproved,
+                           /** Costo de materiales en cotizaciones no aprobadas (tentativo). */
+                           BigDecimal materialsCostTentative,
+                           /** Cotizaciones asociadas (para la columna/agregación por cotización). */
+                           List<QuoteRef> quotes,
+                           /** Conteo de cotizaciones asociadas (barato, disponible también en la lista). */
+                           Integer quoteCount) {}
 }

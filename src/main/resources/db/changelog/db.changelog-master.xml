@@ -82,6 +82,15 @@
     <include file="changes/051_invoice_custody.sql" relativeToChangelogFile="true"/>
     <include file="changes/052_payment_bank.sql" relativeToChangelogFile="true"/>
     <include file="changes/053_posting_foundation.sql" relativeToChangelogFile="true"/>
+    <include file="changes/054_project_materials.sql" relativeToChangelogFile="true"/>
+    <include file="changes/055_project_quotes.sql" relativeToChangelogFile="true"/>
+    <include file="changes/056_product_suppliers.sql" relativeToChangelogFile="true"/>
+    <include file="changes/057_catalog_hierarchy.sql" relativeToChangelogFile="true"/>
+    <include file="changes/058_posting_cash_backfill.sql" relativeToChangelogFile="true"/>
+    <include file="changes/059_quote_centric.sql" relativeToChangelogFile="true"/>
+    <include file="changes/060_quote_charges.sql" relativeToChangelogFile="true"/>
+    <include file="changes/061_quote_payment_terms.sql" relativeToChangelogFile="true"/>
+    <include file="changes/062_quote_pricing.sql" relativeToChangelogFile="true"/>
     <include file="changes/054_seed_faltante.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

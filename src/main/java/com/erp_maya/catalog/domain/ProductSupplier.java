@@ -9,11 +9,13 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
+/** Proveedor y costo de compra específicos para un producto. */
 @Entity
-@Table(name = "categories")
-public class Category {
+@Table(name = "product_suppliers")
+public class ProductSupplier {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -22,13 +24,17 @@ public class Category {
     @Column(name = "company_id", nullable = false)
     private Long companyId;
 
+    @Column(name = "product_id", nullable = false)
+    private Long productId;
+
+    @Column(name = "supplier_id", nullable = false)
+    private Long supplierId;
+
+    @Column(name = "unit_cost", nullable = false)
+    private BigDecimal unitCost;
+
     @Column(nullable = false)
-    private String name;
-
-    @Column(name = "parent_id")
-    private Long parentId;
-
-    private String icon;
+    private Boolean preferred = Boolean.FALSE;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
@@ -40,19 +46,16 @@ public class Category {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
-
     public Long getCompanyId() { return companyId; }
     public void setCompanyId(Long companyId) { this.companyId = companyId; }
-
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-
-    public Long getParentId() { return parentId; }
-    public void setParentId(Long parentId) { this.parentId = parentId; }
-
-    public String getIcon() { return icon; }
-    public void setIcon(String icon) { this.icon = icon; }
-
+    public Long getProductId() { return productId; }
+    public void setProductId(Long productId) { this.productId = productId; }
+    public Long getSupplierId() { return supplierId; }
+    public void setSupplierId(Long supplierId) { this.supplierId = supplierId; }
+    public BigDecimal getUnitCost() { return unitCost; }
+    public void setUnitCost(BigDecimal unitCost) { this.unitCost = unitCost; }
+    public Boolean getPreferred() { return preferred; }
+    public void setPreferred(Boolean preferred) { this.preferred = preferred; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }
