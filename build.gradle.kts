@@ -34,6 +34,10 @@ dependencies {
     implementation("io.micronaut.security:micronaut-security-jwt")
     implementation("at.favre.lib:bcrypt:0.10.2")
     compileOnly("io.micronaut:micronaut-http-client")
+    // AWS SDK v2 — S3 + presigner para subidas directas del navegador (logos de empresa).
+    // Credenciales por la cadena por defecto (IAM Role en EC2/ECS/Lambda; perfil en local).
+    implementation(platform("software.amazon.awssdk:bom:2.29.20"))
+    implementation("software.amazon.awssdk:s3")
     runtimeOnly("ch.qos.logback:logback-classic")
     testImplementation("io.micronaut:micronaut-http-client")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
