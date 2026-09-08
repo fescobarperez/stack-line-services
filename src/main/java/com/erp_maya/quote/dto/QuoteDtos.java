@@ -30,6 +30,15 @@ public final class QuoteDtos {
                           @NotEmpty @Valid List<ItemRequest> items) {}
 
     @Serdeable
+    public record UpdateItemRequest(@NotNull Long id, String description,
+                                    @NotNull BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount) {}
+
+    @Serdeable
+    public record UpdateRequest(LocalDate validUntil, String notes,
+                                String profitCalcType, BigDecimal profitValue,
+                                @NotEmpty @Valid List<UpdateItemRequest> items) {}
+
+    @Serdeable
     public record ItemResponse(Long id, Long productId, String productName, String uom, BigDecimal quantity,
                                BigDecimal unitPrice, BigDecimal discount, BigDecimal lineTotal) {}
 

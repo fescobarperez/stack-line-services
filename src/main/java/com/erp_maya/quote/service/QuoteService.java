@@ -102,7 +102,14 @@ public class QuoteService {
         quote.setSupplierNit(req.supplierNit());
         quote.setSupplierEmail(req.supplierEmail());
         quote.setSupplierContact(req.supplierContact());
-        quote.setQuoteDate(req.quoteDate());
+        LocalDate quoteDate = req.quoteDate() != null ? req.quoteDate() : LocalDate.now();
+        if (!rfq && req.validUntil() == null) {
+            throw new IllegalStateException("Una cotización a cliente necesita fecha de expiración");
+        }
+        if (!rfq && req.validUntil().isBefore(quoteDate)) {
+            throw new IllegalStateException("La fecha de expiración no puede ser anterior a la fecha de cotización");
+        }
+        quote.setQuoteDate(quoteDate);
         quote.setValidUntil(req.validUntil());
         quote.setDeadline(req.deadline());
         quote.setLeadTime(req.leadTime());
@@ -175,11 +182,87 @@ public class QuoteService {
     }
 
     @Transactional
+    public QuoteDtos.Response update(Long id, QuoteDtos.UpdateRequest req) {
+        Long companyId = tenant.getCompanyId();
+        Quote quote = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!"borrador".equalsIgnoreCase(quote.getStatus()) && !"draft".equalsIgnoreCase(quote.getStatus())) {
+            throw new IllegalStateException("Solo se pueden editar cotizaciones en borrador");
+        }
+
+        LocalDate quoteDate = quote.getQuoteDate() != null ? quote.getQuoteDate() : LocalDate.now();
+        if (req.validUntil() == null) {
+            throw new IllegalStateException("Una cotización a cliente necesita fecha de expiración");
+        }
+        if (req.validUntil().isBefore(quoteDate)) {
+            throw new IllegalStateException("La fecha de expiración no puede ser anterior a la fecha de cotización");
+        }
+        if (req.items() == null || req.items().isEmpty()) {
+            throw new IllegalStateException("La cotización debe conservar al menos una línea");
+        }
+
+        quote.setValidUntil(req.validUntil());
+        quote.setNotes(req.notes());
+        quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
+        quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
+
+        var itemsById = quote.getItems().stream()
+                .collect(java.util.stream.Collectors.toMap(QuoteItem::getId, java.util.function.Function.identity()));
+        var keptItemIds = new java.util.HashSet<Long>();
+        BigDecimal subtotal = BigDecimal.ZERO;
+        for (QuoteDtos.UpdateItemRequest itemReq : req.items()) {
+            QuoteItem item = itemsById.get(itemReq.id());
+            if (item == null) {
+                throw new IllegalStateException("La línea " + itemReq.id() + " no pertenece a la cotización");
+            }
+            if (itemReq.quantity() == null || itemReq.quantity().signum() <= 0) {
+                throw new IllegalStateException("La cantidad de cada línea debe ser mayor que cero");
+            }
+            BigDecimal unitPrice = itemReq.unitPrice() != null ? itemReq.unitPrice() : BigDecimal.ZERO;
+            BigDecimal discount = itemReq.discount() != null ? itemReq.discount() : BigDecimal.ZERO;
+            if (unitPrice.signum() < 0 || discount.signum() < 0 || discount.compareTo(new BigDecimal("100")) > 0) {
+                throw new IllegalStateException("Precio y descuento deben ser valores válidos");
+            }
+            BigDecimal factor = BigDecimal.ONE.subtract(discount.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
+            BigDecimal lineTotal = unitPrice.multiply(itemReq.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
+            item.setItemName(itemReq.description());
+            item.setDescription(itemReq.description());
+            item.setQuantity(itemReq.quantity());
+            item.setUnitPrice(unitPrice);
+            item.setDiscount(discount);
+            item.setLineTotal(lineTotal);
+            keptItemIds.add(item.getId());
+            subtotal = subtotal.add(lineTotal);
+        }
+
+        for (ProjectMaterial material : projectMaterials.findByCompanyIdAndQuoteId(companyId, quote.getId())) {
+            if (material.getQuoteItemId() != null && !keptItemIds.contains(material.getQuoteItemId())) {
+                material.setQuoteId(null);
+                material.setQuoteItemId(null);
+                projectMaterials.update(material);
+            }
+        }
+        quote.getItems().removeIf(item -> !keptItemIds.contains(item.getId()));
+
+        BigDecimal taxRate = quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate();
+        BigDecimal tax = subtotal.multiply(taxRate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+        quote.setQuoteDate(quoteDate);
+        quote.setSubtotal(subtotal);
+        quote.setTax(tax);
+        quote.setTotal(subtotal.add(tax).setScale(2, RoundingMode.HALF_UP));
+        Quote saved = quotes.update(quote);
+        quoteCharges.getSummary(saved.getId());
+        history.save(new QuoteHistory(companyId, saved.getId(), "Cotización editada", null));
+        return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
+    }
+
+    @Transactional
     public QuoteDtos.Response updateStatus(Long id, QuoteDtos.StatusRequest req) {
         Long companyId = tenant.getCompanyId();
         Quote quote = quotes.findByIdAndCompanyId(id, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
         if ("enviada".equalsIgnoreCase(req.status()) && !"enviada".equalsIgnoreCase(quote.getStatus())) {
+            validateExpirationBeforeClientDelivery(quote);
             paymentPlans.validateReadyToSend(id, companyId);
         }
         quote.setStatus(req.status());
@@ -217,6 +300,22 @@ public class QuoteService {
         String action = req.note() != null && !req.note().isBlank() ? req.note() : "Estado → " + req.status();
         history.save(new QuoteHistory(companyId, saved.getId(), action, req.actor()));
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
+    }
+
+    private void validateExpirationBeforeClientDelivery(Quote quote) {
+        if (!"client".equalsIgnoreCase(quote.getPartyType())) return;
+
+        LocalDate today = LocalDate.now();
+        LocalDate quoteDate = quote.getQuoteDate() != null ? quote.getQuoteDate() : today;
+        if (quote.getValidUntil() == null) {
+            throw new IllegalStateException("No se puede enviar la cotización sin fecha de expiración");
+        }
+        if (quote.getValidUntil().isBefore(today)) {
+            throw new IllegalStateException("No se puede enviar una cotización con fecha de expiración vencida");
+        }
+        if (quote.getValidUntil().isBefore(quoteDate)) {
+            throw new IllegalStateException("La fecha de expiración no puede ser anterior a la fecha de cotización");
+        }
     }
 
     private Project resolveProject(Long companyId, Long projectId, Client client) {
@@ -290,7 +389,8 @@ public class QuoteService {
     private static QuoteDtos.Response toResponse(Quote q, List<QuoteHistory> hist) {
         var items = q.getItems().stream().map(i -> new QuoteDtos.ItemResponse(
                 i.getId(), i.getProduct() != null ? i.getProduct().getId() : null,
-                i.getProduct() != null ? i.getProduct().getName() : i.getItemName(),
+                i.getProduct() != null ? i.getProduct().getName()
+                        : (i.getDescription() != null && !i.getDescription().isBlank() ? i.getDescription() : i.getItemName()),
                 i.getUom(), i.getQuantity(), i.getUnitPrice(), i.getDiscount(), i.getLineTotal())).toList();
         var historyOut = hist.stream().map(h -> new QuoteDtos.HistoryEntry(
                 h.getId(), h.getAction(), h.getActor(), h.getCreatedAt())).toList();

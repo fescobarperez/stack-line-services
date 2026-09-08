@@ -49,6 +49,11 @@ public class QuoteController {
         return service.create(request);
     }
 
+    @Put("/{id}")
+    public QuoteDtos.Response update(Long id, @Valid @Body QuoteDtos.UpdateRequest request) {
+        return service.update(id, request);
+    }
+
     @Put("/{id}/status")
     public QuoteDtos.Response updateStatus(Long id, @Valid @Body QuoteDtos.StatusRequest request) {
         return service.updateStatus(id, request);
