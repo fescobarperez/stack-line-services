@@ -15,6 +15,7 @@ public class ProjectRepositories {
         List<Project> findByCompanyIdOrderByIdDesc(Long companyId);
         Optional<Project> findByIdAndCompanyId(Long id, Long companyId);
         Optional<Project> findByCompanyIdAndQuoteId(Long companyId, Long quoteId);
+        Optional<Project> findByCompanyIdAndClientIdAndName(Long companyId, Long clientId, String name);
         Optional<Project> findByCompanyIdAndCode(Long companyId, String code);
         long countByCompanyId(Long companyId);
     }

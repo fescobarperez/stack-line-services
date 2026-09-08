@@ -345,9 +345,9 @@ public class SaleService {
         String desc = ("NCRE".equals(sale.getDocType()) ? "Nota de crédito " : "Venta ") + ref;
 
         posting.post("sale", sale.getId(), LocalDate.now(), desc, ref, PostingService.lines(
-                new PostingService.Line(destino, total, BigDecimal.ZERO, desc, cc),
-                new PostingService.Line("posting.revenue", BigDecimal.ZERO, base, "Ingresos " + ref, cc),
-                new PostingService.Line("posting.tax_payable", BigDecimal.ZERO, tax, "IVA " + ref, cc)));
+                PostingService.Line.debit(destino, total, desc, cc),
+                PostingService.Line.credit("posting.revenue", base, "Ingresos " + ref, cc),
+                PostingService.Line.credit("posting.tax_payable", tax, "IVA " + ref, cc)));
     }
 
     /** El centro de costo del proyecto, para que los reportes filtren por él. */

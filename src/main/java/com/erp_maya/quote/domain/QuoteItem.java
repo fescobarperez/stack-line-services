@@ -42,6 +42,13 @@ public class QuoteItem {
 
     private String uom;
 
+    /** Descripción de UN nivel que ve el cliente en el PDF. Default = nombre de carpeta. */
+    private String description;
+
+    /** Carpeta del árbol de materiales de la que salió la línea, si aplica. */
+    @Column(name = "source_group_id")
+    private Long sourceGroupId;
+
     @Column(name = "unit_price")
     private BigDecimal unitPrice;
 
@@ -55,6 +62,12 @@ public class QuoteItem {
 
     public String getUom() { return uom; }
     public void setUom(String uom) { this.uom = uom; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
+    public Long getSourceGroupId() { return sourceGroupId; }
+    public void setSourceGroupId(Long sourceGroupId) { this.sourceGroupId = sourceGroupId; }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

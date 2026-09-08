@@ -20,6 +20,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     /** Cobros imputados a un proyecto: adelantos, avances o liquidación. */
     List<Payment> findByCompanyIdAndProjectIdOrderByPaymentDateDesc(Long companyId, Long projectId);
 
+    /** Cobros imputados a una cotización (modelo cotización-céntrico). */
+    List<Payment> findByCompanyIdAndQuoteIdOrderByPaymentDateDesc(Long companyId, Long quoteId);
+
     Optional<Payment> findByIdAndCompanyId(Long id, Long companyId);
 
     /**

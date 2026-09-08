@@ -6,6 +6,7 @@ import io.micronaut.serde.annotation.Serdeable;
 public record CategoryResponse(
         Long id,
         String name,
-        String icon
+        String icon,
+        Long parentId
 ) {
 }

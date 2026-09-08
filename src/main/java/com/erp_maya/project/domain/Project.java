@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
-/** Trabajo con seguimiento de rentabilidad. Nace de una cotización aprobada. */
+/** Trabajo con seguimiento de rentabilidad. Puede existir antes de cotizar. */
 @Entity
 @Table(name = "projects")
 public class Project {

@@ -18,7 +18,10 @@ import com.erp_maya.partner.domain.Client;
 import com.erp_maya.partner.repository.ClientRepository;
 import com.erp_maya.project.domain.Project;
 import com.erp_maya.project.domain.ProjectCost;
+import com.erp_maya.project.domain.ProjectMaterial;
 import com.erp_maya.project.dto.ProjectDtos;
+import com.erp_maya.project.repository.ProjectMaterialRepositories.Materials;
+import com.erp_maya.project.repository.ProjectQuoteRepository;
 import com.erp_maya.project.repository.ProjectRepositories.Costs;
 import com.erp_maya.project.repository.ProjectRepositories.Projects;
 import com.erp_maya.payable.repository.PurchaseInvoiceRepository;
@@ -26,8 +29,11 @@ import com.erp_maya.pos.repository.SaleRepository;
 import com.erp_maya.purchasing.repository.PurchaseOrderRepository;
 import com.erp_maya.receivable.domain.Payment;
 import com.erp_maya.receivable.repository.PaymentRepository;
+import com.erp_maya.quote.repository.QuoteChargeRepository;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.repository.QuoteRepository;
+import com.erp_maya.quote.dto.QuoteChargeDtos;
+import com.erp_maya.quote.service.QuoteChargeService;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
@@ -53,7 +59,11 @@ public class ProjectService {
 
     private final Projects projects;
     private final Costs costs;
+    private final Materials projectMaterials;
     private final QuoteRepository quotes;
+    private final ProjectQuoteRepository projectQuotes;
+    private final QuoteChargeRepository quoteChargeRepository;
+    private final QuoteChargeService quoteCharges;
     private final ClientRepository clients;
     private final PaymentRepository payments;
     private final PurchaseOrderRepository purchaseOrders;
@@ -68,7 +78,10 @@ public class ProjectService {
     private final PostingService posting;
     private final TenantContext tenant;
 
-    public ProjectService(Projects projects, Costs costs, QuoteRepository quotes,
+    public ProjectService(Projects projects, Costs costs, Materials projectMaterials, QuoteRepository quotes,
+                          ProjectQuoteRepository projectQuotes,
+                          QuoteChargeRepository quoteChargeRepository,
+                          QuoteChargeService quoteCharges,
                           ClientRepository clients, PaymentRepository payments,
                           PurchaseOrderRepository purchaseOrders,
                           PurchaseInvoiceRepository purchaseInvoices, SaleRepository sales,
@@ -79,7 +92,11 @@ public class ProjectService {
                           TenantContext tenant) {
         this.projects = projects;
         this.costs = costs;
+        this.projectMaterials = projectMaterials;
         this.quotes = quotes;
+        this.projectQuotes = projectQuotes;
+        this.quoteChargeRepository = quoteChargeRepository;
+        this.quoteCharges = quoteCharges;
         this.clients = clients;
         this.payments = payments;
         this.purchaseOrders = purchaseOrders;
@@ -125,53 +142,6 @@ public class ProjectService {
         // consumir bodega y acumular costos sin que nadie lo autorizara.
         p.setStatus("draft");
         return toResponse(projects.save(p), true);
-    }
-
-    /**
-     * Convierte una cotización en proyecto. Solo aprobadas y una sola vez: la
-     * segunda llamada devolvería un duplicado con el mismo contratado.
-     */
-    @Transactional
-    public ProjectDtos.Response fromQuote(Long quoteId, ProjectDtos.FromQuoteRequest req) {
-        Long companyId = tenant.getCompanyId();
-        Quote q = quotes.findByIdAndCompanyId(quoteId, companyId)
-                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
-        if (!"aprobada".equalsIgnoreCase(String.valueOf(q.getStatus()))) {
-            throw new IllegalStateException(
-                    "Solo se convierten cotizaciones aprobadas; esta está " + q.getStatus());
-        }
-        if (q.getClient() == null) {
-            throw new IllegalStateException("La cotización no tiene cliente: un proyecto necesita a quién facturar");
-        }
-        projects.findByCompanyIdAndQuoteId(companyId, quoteId).ifPresent(existing -> {
-            throw new IllegalStateException("Esta cotización ya generó el proyecto " + existing.getCode());
-        });
-
-        Project p = new Project();
-        p.setCompanyId(companyId);
-        p.setQuoteId(quoteId);
-        p.setClientId(q.getClient().getId());
-        p.setCode(req != null && req.code() != null && !req.code().isBlank()
-                ? req.code().trim() : nextCode(companyId));
-        p.setName(req != null && req.name() != null && !req.name().isBlank()
-                ? req.name().trim() : "Proyecto " + q.getDocNumber());
-        // El contratado se congela aquí: renegociar la cotización no lo cambia.
-        p.setContractedAmount(q.getTotal() != null ? q.getTotal() : BigDecimal.ZERO);
-        if (req != null) {
-            p.setCostCenterId(req.costCenterId());
-            p.setStartDate(req.startDate() != null ? req.startDate() : LocalDate.now());
-            p.setEndDate(req.endDate());
-            p.setNotes(req.notes());
-        } else {
-            p.setStartDate(LocalDate.now());
-        }
-        // Directo a ejecución, sin pasar por borrador: la cotización aprobada ES
-        // la aprobación. Pedir una segunda sería un clic sin contenido.
-        p.setStatus("open");
-        Project saved = projects.save(p);
-        q.setProjectId(saved.getId());
-        quotes.update(q);
-        return toResponse(saved, true);
     }
 
     @Transactional
@@ -386,9 +356,43 @@ public class ProjectService {
     }
 
     private ProjectDtos.Response toResponse(Project p, boolean withCosts) {
-        List<ProjectCost> rows = costs.findByProjectIdOrderByCostDateDesc(p.getId());
-        BigDecimal executed = rows.stream().map(ProjectCost::getAmount)
+        List<ProjectMaterial> materialRows = projectMaterials
+                .findByCompanyIdAndProjectIdOrderByIdAsc(p.getCompanyId(), p.getId());
+        BigDecimal materialsCost = materialRows.stream()
+                .map(this::plannedMaterialAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // Separación por estado de la cotización del material (regla 6):
+        //   aprobado  → materiales cuya cotización está aprobada: costo firme.
+        //   tentativo → materiales en cotización no aprobada (borrador/enviada):
+        //               base del margen estimado, aún no firme.
+        //   sin cotización (quote_id == NULL) → no cuenta en ninguno: aún no es
+        //               parte de ninguna oferta comercial.
+        BigDecimal materialsCostApproved = BigDecimal.ZERO;
+        BigDecimal materialsCostTentative = BigDecimal.ZERO;
+        java.util.Map<Long, Boolean> quoteApproved = new java.util.HashMap<>();
+        for (ProjectMaterial m : materialRows) {
+            if (m.getQuoteId() == null) continue;
+            boolean approved = quoteApproved.computeIfAbsent(m.getQuoteId(), qid ->
+                    quotes.findByIdAndCompanyId(qid, p.getCompanyId())
+                            .map(q -> approvedQuoteStatus(q.getStatus()))
+                            .orElse(Boolean.FALSE));
+            BigDecimal amt = plannedMaterialAmount(m);
+            if (approved) materialsCostApproved = materialsCostApproved.add(amt);
+            else materialsCostTentative = materialsCostTentative.add(amt);
+        }
+        // Gastos del proyecto = DERIVADOS de sus cotizaciones (modelo agregado):
+        //   materiales en cotización (materialsCostApproved + tentative) +
+        //   los cargos manuales (quote_charges) de esas cotizaciones.
+        // Ya no se usa project_cost como fuente de gastos.
+        BigDecimal materialsInQuotes = materialsCostApproved.add(materialsCostTentative);
+        BigDecimal quoteChargesTotal = projectQuotes
+                .findByCompanyIdAndProjectId(p.getCompanyId(), p.getId()).stream()
+                .flatMap(link -> quoteChargeRepository
+                        .findByCompanyIdAndQuoteIdOrderBySortOrderAsc(p.getCompanyId(), link.getQuoteId())
+                        .stream())
+                .map(c -> c.getComputedAmount() == null ? BigDecimal.ZERO : c.getComputedAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal executed = materialsInQuotes.add(quoteChargesTotal);
         // Comprometido: órdenes del proyecto que todavía no tienen factura.
         // No se suma al ejecutado —una OC puede cancelarse— pero descontarlo del
         // margen proyectado es lo que permite ver venir un sobrecosto.
@@ -412,7 +416,19 @@ public class ProjectService {
         BigDecimal collected = paid.stream().map(Payment::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        BigDecimal contracted = p.getContractedAmount();
+        // Contratado = Σ del total de las cotizaciones APROBADAS/incluidas del
+        // proyecto (la fuente de verdad es la cotización, no un campo estático).
+        // Un borrador no es contratado todavía. Cae al campo del proyecto solo
+        // si no hay ninguna cotización aprobada (compatibilidad / proyectos viejos).
+        BigDecimal quotesContracted = projectQuotes
+                .findByCompanyIdAndProjectId(p.getCompanyId(), p.getId()).stream()
+                .map(link -> quotes.findByIdAndCompanyId(link.getQuoteId(), p.getCompanyId()).orElse(null))
+                .filter(qq -> qq != null && approvedQuoteStatus(qq.getStatus()))
+                .map(qq -> quoteCharges.getSummary(qq.getId()).total())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal contracted = quotesContracted.signum() > 0
+                ? quotesContracted
+                : (p.getContractedAmount() != null ? p.getContractedAmount() : BigDecimal.ZERO);
         BigDecimal margin = contracted.subtract(executed);
         BigDecimal projected = margin.subtract(committed);
         BigDecimal marginPct = contracted.signum() == 0 ? BigDecimal.ZERO
@@ -423,6 +439,41 @@ public class ProjectService {
         String quoteNumber = p.getQuoteId() == null ? null
                 : quotes.findByIdAndCompanyId(p.getQuoteId(), p.getCompanyId())
                     .map(Quote::getDocNumber).orElse(null);
+
+        // Cotizaciones asociadas al proyecto, para la vista de agregación.
+        List<com.erp_maya.project.domain.ProjectQuote> quoteLinks =
+                projectQuotes.findByCompanyIdAndProjectId(p.getCompanyId(), p.getId());
+        int quoteCount = quoteLinks.size();
+        List<ProjectDtos.QuoteRef> quoteRefs = withCosts
+                ? quoteLinks.stream()
+                    .map(link -> {
+                        Quote q = quotes.findByIdAndCompanyId(link.getQuoteId(), p.getCompanyId()).orElse(null);
+                        // Materiales de esta cotización (derivado).
+                        BigDecimal qMaterials = materialRows.stream()
+                                .filter(m -> link.getQuoteId().equals(m.getQuoteId()))
+                                .map(this::plannedMaterialAmount)
+                                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                        // Cargos manuales de esta cotización.
+                        List<ProjectDtos.QuoteChargeRef> qCharges = quoteChargeRepository
+                                .findByCompanyIdAndQuoteIdOrderBySortOrderAsc(p.getCompanyId(), link.getQuoteId())
+                                .stream()
+                                .map(c -> new ProjectDtos.QuoteChargeRef(c.getCategory(), c.getDescription(),
+                                        c.getCalcType(), money(c.getComputedAmount())))
+                                .toList();
+                        BigDecimal chargesSum = qCharges.stream()
+                                .map(ProjectDtos.QuoteChargeRef::computedAmount)
+                                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                        QuoteChargeDtos.Summary pricing = quoteCharges.getSummary(link.getQuoteId());
+                        return new ProjectDtos.QuoteRef(
+                                link.getQuoteId(),
+                                q != null ? q.getDocNumber() : ("COT-" + link.getQuoteId()),
+                                q != null ? q.getStatus() : "desconocido",
+                                money(pricing.operatingCost()), money(pricing.profitAmount()),
+                                money(pricing.taxableSubtotal()), money(pricing.taxRate()), money(pricing.tax()), money(pricing.total()),
+                                link.getIncluded(), money(qMaterials), qCharges, money(pricing.operatingCost()));
+                    })
+                    .toList()
+                : List.of();
 
         return new ProjectDtos.Response(p.getId(), p.getCode(), p.getName(),
                 p.getQuoteId(), quoteNumber, p.getClientId(), clientName,
@@ -435,12 +486,36 @@ public class ProjectService {
                 // es margen, y ya se ve en `margin`.
                 executed.subtract(invoiced).max(BigDecimal.ZERO),
                 p.getCloseNote(),
-                withCosts ? rows.stream().map(c -> new ProjectDtos.CostResponse(
-                        c.getId(), c.getSource(), c.getRefId(), c.getDescription(),
-                        c.getAmount(), c.getCostDate())).toList() : List.of(),
+                // Gastos legacy (project_cost) retirados: los gastos se ven
+                // derivados de las cotizaciones. La lista queda vacía.
+                List.of(),
                 withCosts ? paid.stream().map(x -> new ProjectDtos.PaymentResponse(
                         x.getId(), x.getAmount(), x.getPaymentDate(),
                         x.getMethod(), x.getReference(),
-                        x.getReceiptNumber(), x.getReceiptPrintedAt())).toList() : List.of());
+                        x.getReceiptNumber(), x.getReceiptPrintedAt(), x.getQuoteId())).toList() : List.of(),
+                money(materialsCost),
+                money(materialsCostApproved),
+                money(materialsCostTentative),
+                quoteRefs,
+                quoteCount);
+    }
+
+    private BigDecimal money(BigDecimal value) {
+        return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** Estados de cotización que cuentan como firmes para el costo de materiales. */
+    private static boolean approvedQuoteStatus(String status) {
+        if (status == null) return false;
+        String s = status.trim().toLowerCase();
+        return s.equals("aprobada") || s.equals("convertida");
+    }
+
+    private BigDecimal plannedMaterialAmount(ProjectMaterial material) {
+        BigDecimal unitCost = material.getUnitCostSnapshot() == null
+                ? BigDecimal.ZERO : material.getUnitCostSnapshot();
+        BigDecimal quantity = material.getQuantityPlanned() == null
+                ? BigDecimal.ZERO : material.getQuantityPlanned();
+        return unitCost.multiply(quantity).setScale(2, RoundingMode.HALF_UP);
     }
 }

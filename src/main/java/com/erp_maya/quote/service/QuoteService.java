@@ -7,6 +7,12 @@ import com.erp_maya.common.TenantContext;
 import com.erp_maya.settings.service.TaxService;
 import com.erp_maya.partner.domain.Client;
 import com.erp_maya.partner.repository.ClientRepository;
+import com.erp_maya.project.domain.Project;
+import com.erp_maya.project.domain.ProjectQuote;
+import com.erp_maya.project.domain.ProjectMaterial;
+import com.erp_maya.project.repository.ProjectMaterialRepositories.Materials;
+import com.erp_maya.project.repository.ProjectQuoteRepository;
+import com.erp_maya.project.repository.ProjectRepositories.Projects;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteHistory;
 import com.erp_maya.quote.domain.QuoteItem;
@@ -21,6 +27,7 @@ import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -31,17 +38,28 @@ public class QuoteService {
     private final QuoteHistoryRepository history;
     private final ProductRepository products;
     private final ClientRepository clients;
+    private final Projects projects;
+    private final ProjectQuoteRepository projectQuotes;
+    private final Materials projectMaterials;
     private final TaxService taxService;
+    private final QuoteChargeService quoteCharges;
+    private final QuotePlanService paymentPlans;
     private final TenantContext tenant;
 
     public QuoteService(QuoteRepository quotes, QuoteHistoryRepository history, ProductRepository products,
-                        ClientRepository clients, TenantContext tenant,
-                       TaxService taxService) {
+                        ClientRepository clients, Projects projects, ProjectQuoteRepository projectQuotes,
+                        Materials projectMaterials, TenantContext tenant, TaxService taxService,
+                        QuoteChargeService quoteCharges, QuotePlanService paymentPlans) {
         this.quotes = quotes;
         this.history = history;
         this.products = products;
         this.clients = clients;
+        this.projects = projects;
+        this.projectQuotes = projectQuotes;
+        this.projectMaterials = projectMaterials;
         this.taxService = taxService;
+        this.quoteCharges = quoteCharges;
+        this.paymentPlans = paymentPlans;
         this.tenant = tenant;
     }
 
@@ -51,13 +69,17 @@ public class QuoteService {
         Page<Quote> page = (partyType == null || partyType.isBlank())
                 ? quotes.findByCompanyIdOrderByQuoteDateDesc(companyId, pageable)
                 : quotes.findByCompanyIdAndPartyTypeOrderByQuoteDateDesc(companyId, partyType, pageable);
-        return page.map(q -> toResponse(q, List.of()));
+        return page.map(q -> {
+            if ("client".equalsIgnoreCase(q.getPartyType())) quoteCharges.getSummary(q.getId());
+            return toResponse(q, List.of());
+        });
     }
 
     @Transactional
     public QuoteDtos.Response get(Long id) {
         Quote quote = quotes.findByIdAndCompanyId(id, tenant.getCompanyId())
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if ("client".equalsIgnoreCase(quote.getPartyType())) quoteCharges.getSummary(quote.getId());
         return toResponse(quote, history.findByQuoteIdOrderByCreatedAtAsc(quote.getId()));
     }
 
@@ -87,11 +109,17 @@ public class QuoteService {
         quote.setPaymentTerms(req.paymentTerms());
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
+        quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
+        quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
         quote.setStatus(rfq ? "solicitada" : "borrador");
-        // Cliente de la cotización. Sin esto se guardaba como texto suelto y
-        // nunca quedaba asociada, que es lo que impedía convertirla en proyecto.
+        Client quoteClient = null;
+        // Toda cotización a cliente queda anclada a un proyecto. RFQ no participa
+        // en proyectos: sigue siendo un documento de compras independiente.
         if (!rfq) {
-            resolveOrCreateClient(companyId, req).ifPresent(quote::setClient);
+            quoteClient = resolveOrCreateClient(companyId, req)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Una cotización cliente necesita un cliente para asignar su proyecto"));
+            quote.setClient(quoteClient);
         } else if (req.clientId() != null) {
             clients.findByIdAndCompanyId(req.clientId(), companyId).ifPresent(quote::setClient);
         }
@@ -119,15 +147,30 @@ public class QuoteService {
         }
         // La tasa sale de la configuración de la empresa, no de una constante.
         BigDecimal rate = taxService.rate();
-        BigDecimal tax = total.multiply(TaxService.factorOverGross(rate)).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal tax = total.multiply(rate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
         quote.setTaxRate(rate);
-        quote.setTotal(total);
+        quote.setSubtotal(total);
         quote.setTax(tax);
-        quote.setSubtotal(total.subtract(tax));
+        quote.setTotal(total.add(tax).setScale(2, RoundingMode.HALF_UP));
+
+        if (!rfq) {
+            Project project = resolveProject(companyId, req.projectId(), quoteClient);
+            quote.setProjectId(project.getId());
+        }
 
         Quote saved = quotes.save(quote);
+        if (!rfq) {
+            ProjectQuote link = new ProjectQuote();
+            link.setCompanyId(companyId);
+            link.setProjectId(saved.getProjectId());
+            link.setQuoteId(saved.getId());
+            link.setAmountSnapshot(saved.getTotal());
+            link.setIncluded(Boolean.FALSE); // solo aprobada agrega al proyecto
+            link.setCreatedAt(Instant.now());
+            projectQuotes.save(link);
+        }
         history.save(new QuoteHistory(companyId, saved.getId(),
-                rfq ? "Solicitud de cotización creada" : "Cotización creada", req.createdBy()));
+                rfq ? "Solicitud de cotización creada" : "Cotización creada y anclada al proyecto", req.createdBy()));
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
     }
 
@@ -136,11 +179,82 @@ public class QuoteService {
         Long companyId = tenant.getCompanyId();
         Quote quote = quotes.findByIdAndCompanyId(id, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if ("enviada".equalsIgnoreCase(req.status()) && !"enviada".equalsIgnoreCase(quote.getStatus())) {
+            paymentPlans.validateReadyToSend(id, companyId);
+        }
         quote.setStatus(req.status());
         Quote saved = quotes.update(quote);
+
+        // Cotización rechazada/cancelada: sus materiales vuelven al pool
+        // disponible del proyecto para que puedan ir en otra cotización.
+        if (releasesMaterials(saved.getStatus())) {
+            for (ProjectMaterial m : projectMaterials.findByCompanyIdAndQuoteId(companyId, saved.getId())) {
+                m.setQuoteId(null);
+                m.setQuoteItemId(null);
+                projectMaterials.update(m);
+            }
+        }
+        projectQuotes.findByCompanyIdAndQuoteId(companyId, saved.getId()).ifPresent(link -> {
+            boolean included = contributesToProject(saved.getStatus());
+            link.setIncluded(included);
+            link.setAmountSnapshot(saved.getTotal());
+            if (included) {
+                link.setIncludedAt(Instant.now());
+                link.setExcludedAt(null);
+                link.setExclusionReason(null);
+                projects.findByIdAndCompanyId(link.getProjectId(), companyId).ifPresent(project -> {
+                    if ("draft".equals(project.getStatus())) {
+                        project.setStatus("open");
+                        projects.update(project);
+                    }
+                });
+            } else {
+                link.setExcludedAt(Instant.now());
+                link.setExclusionReason(req.note());
+            }
+            projectQuotes.update(link);
+        });
         String action = req.note() != null && !req.note().isBlank() ? req.note() : "Estado → " + req.status();
         history.save(new QuoteHistory(companyId, saved.getId(), action, req.actor()));
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
+    }
+
+    private Project resolveProject(Long companyId, Long projectId, Client client) {
+        if (projectId != null) {
+            Project selected = projects.findByIdAndCompanyId(projectId, companyId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Proyecto " + projectId + " no encontrado"));
+            if (!selected.getClientId().equals(client.getId())) {
+                throw new IllegalStateException("La cotización y el proyecto deben pertenecer al mismo cliente");
+            }
+            return selected;
+        }
+
+        // No se elige un proyecto existente al azar: eso mezclaría clientes y
+        // rentabilidad. Se reutiliza uno estable por cliente para que el usuario
+        // básico pueda cotizar sin entender todavía el concepto de proyecto.
+        return projects.findByCompanyIdAndClientIdAndName(companyId, client.getId(), "Proyecto general")
+                .orElseGet(() -> {
+                    Project project = new Project();
+                    project.setCompanyId(companyId);
+                    project.setClientId(client.getId());
+                    project.setCode("PRY-AUTO-" + (projects.countByCompanyId(companyId) + 1));
+                    project.setName("Proyecto general");
+                    project.setCurrency("GTQ");
+                    project.setStatus("draft");
+                    project.setStartDate(LocalDate.now());
+                    return projects.save(project);
+                });
+    }
+
+    private boolean contributesToProject(String status) {
+        return "aprobada".equalsIgnoreCase(status) || "convertida".equalsIgnoreCase(status);
+    }
+
+    /** Estados en los que la cotización deja de reservar sus materiales. */
+    private boolean releasesMaterials(String status) {
+        if (status == null) return false;
+        String s = status.trim().toLowerCase();
+        return s.equals("rechazada") || s.equals("cancelada") || s.equals("anulada") || s.equals("vencida");
     }
 
     /**
@@ -187,7 +301,8 @@ public class QuoteService {
                 q.getQuoteDate(), q.getValidUntil(), q.getDeadline(),
                 q.getLeadTime(), q.getPaymentTerms(), q.getCreatedBy(),
                 q.getProjectId(),
-                q.getSubtotal(), q.getTax(), q.getTaxRate(), q.getTotal(), q.getStatus(), q.getNotes(),
+                q.getSubtotal(), q.getTax(), q.getTaxRate(),
+                q.getProfitCalcType(), q.getProfitValue(), q.getProfitAmount(), q.getTotal(), q.getStatus(), q.getNotes(),
                 items, historyOut);
     }
 }

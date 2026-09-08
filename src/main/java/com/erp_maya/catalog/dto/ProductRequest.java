@@ -18,6 +18,8 @@ public record ProductRequest(
         String itemType,
         Boolean tracksStock,
         BigDecimal minStock,
-        String status
+        String status,
+        Long supplierId,
+        BigDecimal supplierCost
 ) {
 }

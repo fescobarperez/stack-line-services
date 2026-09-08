@@ -62,6 +62,16 @@ public class Quote {
 
     private BigDecimal total = BigDecimal.ZERO;
 
+    /** Ganancia comercial explícita: fixed = monto, percent = % sobre costos operativos. */
+    @Column(name = "profit_calc_type", nullable = false)
+    private String profitCalcType = "fixed";
+
+    @Column(name = "profit_value", nullable = false)
+    private BigDecimal profitValue = BigDecimal.ZERO;
+
+    @Column(name = "profit_amount", nullable = false)
+    private BigDecimal profitAmount = BigDecimal.ZERO;
+
     private String status = "draft";
 
     /** Proyecto generado a partir de esta cotización, si se convirtió. */
@@ -154,6 +164,13 @@ public class Quote {
 
     public BigDecimal getTotal() { return total; }
     public void setTotal(BigDecimal total) { this.total = total; }
+
+    public String getProfitCalcType() { return profitCalcType; }
+    public void setProfitCalcType(String profitCalcType) { this.profitCalcType = profitCalcType; }
+    public BigDecimal getProfitValue() { return profitValue; }
+    public void setProfitValue(BigDecimal profitValue) { this.profitValue = profitValue; }
+    public BigDecimal getProfitAmount() { return profitAmount; }
+    public void setProfitAmount(BigDecimal profitAmount) { this.profitAmount = profitAmount; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

@@ -2,12 +2,17 @@ package com.erp_maya.catalog.service;
 
 import com.erp_maya.catalog.domain.Category;
 import com.erp_maya.catalog.domain.Product;
+import com.erp_maya.catalog.domain.ProductSupplier;
 import com.erp_maya.catalog.dto.ProductRequest;
 import com.erp_maya.catalog.dto.ProductResponse;
+import com.erp_maya.catalog.dto.ProductSupplierDtos;
 import com.erp_maya.catalog.repository.CategoryRepository;
 import com.erp_maya.catalog.repository.ProductRepository;
+import com.erp_maya.catalog.repository.ProductSupplierRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.partner.domain.Supplier;
+import com.erp_maya.partner.repository.SupplierRepository;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 import jakarta.inject.Singleton;
@@ -22,11 +27,17 @@ public class ProductService {
 
     private final ProductRepository products;
     private final CategoryRepository categories;
+    private final ProductSupplierRepository productSuppliers;
+    private final SupplierRepository suppliers;
     private final TenantContext tenant;
 
-    public ProductService(ProductRepository products, CategoryRepository categories, TenantContext tenant) {
+    public ProductService(ProductRepository products, CategoryRepository categories,
+                          ProductSupplierRepository productSuppliers, SupplierRepository suppliers,
+                          TenantContext tenant) {
         this.products = products;
         this.categories = categories;
+        this.productSuppliers = productSuppliers;
+        this.suppliers = suppliers;
         this.tenant = tenant;
     }
 
@@ -58,7 +69,7 @@ public class ProductService {
         } else {
             page = products.findByCompanyId(companyId, pageable);
         }
-        return page.map(ProductService::toResponse);
+        return page.map(this::toResponse);
     }
 
     @Transactional
@@ -68,17 +79,63 @@ public class ProductService {
 
     @Transactional
     public ProductResponse create(ProductRequest req) {
+        ensureSkuAvailable(req.sku(), null);
         Product p = new Product();
         p.setCompanyId(tenant.getCompanyId());
         apply(p, req);
-        return toResponse(products.save(p));
+        Product saved = products.save(p);
+        syncSupplier(saved, req, true);
+        Product updated = products.update(saved);
+        return toResponse(updated);
+    }
+
+    @Transactional
+    public ProductResponse addSupplier(Long productId, ProductSupplierDtos.Request req) {
+        Product product = find(productId);
+        Long companyId = tenant.getCompanyId();
+        Supplier supplier = suppliers.findByIdAndCompanyId(req.supplierId(), companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Proveedor " + req.supplierId() + " no encontrado"));
+        List<ProductSupplier> existing = productSuppliers
+                .findByCompanyIdAndProductIdOrderByPreferredDesc(companyId, productId);
+        if (productSuppliers.findByCompanyIdAndProductIdAndSupplierId(companyId, productId, supplier.getId()).isPresent()) {
+            throw new IllegalStateException("El proveedor ya está asociado a este producto");
+        }
+        boolean preferred = req.preferred() != null ? req.preferred() : existing.isEmpty();
+        if (preferred) {
+            existing.forEach(relation -> {
+                relation.setPreferred(false);
+                productSuppliers.save(relation);
+            });
+        }
+        ProductSupplier relation = new ProductSupplier();
+        relation.setCompanyId(companyId);
+        relation.setProductId(productId);
+        relation.setSupplierId(supplier.getId());
+        relation.setUnitCost(req.unitCost());
+        relation.setPreferred(preferred);
+        productSuppliers.save(relation);
+        if (preferred || product.getCost() == null || product.getCost().signum() <= 0) {
+            product.setCost(req.unitCost());
+            products.update(product);
+        }
+        return toResponse(product);
     }
 
     @Transactional
     public ProductResponse update(Long id, ProductRequest req) {
         Product p = find(id);
+        ensureSkuAvailable(req.sku(), id);
         apply(p, req);
-        return toResponse(products.update(p));
+        syncSupplier(p, req, false);
+        Product updated = products.update(p);
+        return toResponse(updated);
+    }
+
+    @Transactional
+    public ProductResponse moveToCategory(Long id, Long categoryId) {
+        Product product = find(id);
+        product.setCategory(resolveCategory(categoryId));
+        return toResponse(products.update(product));
     }
 
     @Transactional
@@ -111,6 +168,70 @@ public class ProductService {
         p.setCategory(resolveCategory(req.categoryId()));
     }
 
+    private void syncSupplier(Product product, ProductRequest req, boolean creating) {
+        boolean rawMaterial = "raw_material".equalsIgnoreCase(product.getItemType());
+        boolean hasSupplierData = req.supplierId() != null || req.supplierCost() != null;
+        if (!rawMaterial && !hasSupplierData) {
+            return;
+        }
+        if (req.supplierId() == null || req.supplierCost() == null || req.supplierCost().signum() <= 0) {
+            if (creating || hasSupplierData) {
+                throw new IllegalStateException("Una materia prima requiere proveedor y costo para ese proveedor");
+            }
+            return;
+        }
+        Long companyId = tenant.getCompanyId();
+        Supplier supplier = suppliers.findByIdAndCompanyId(req.supplierId(), companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Proveedor " + req.supplierId() + " no encontrado"));
+        List<ProductSupplier> existing = productSuppliers
+                .findByCompanyIdAndProductIdOrderByPreferredDesc(companyId, product.getId());
+        ProductSupplier relation = productSuppliers
+                .findByCompanyIdAndProductIdAndSupplierId(companyId, product.getId(), supplier.getId())
+                .orElseGet(ProductSupplier::new);
+        boolean newRelation = relation.getId() == null;
+        relation.setCompanyId(companyId);
+        relation.setProductId(product.getId());
+        relation.setSupplierId(supplier.getId());
+        relation.setUnitCost(req.supplierCost());
+        if (newRelation) {
+            relation.setPreferred(existing.isEmpty());
+        }
+        productSuppliers.save(relation);
+        if (rawMaterial) {
+            product.setCost(req.supplierCost());
+        }
+    }
+
+    private void ensureSkuAvailable(String sku, Long productId) {
+        products.findBySkuAndCompanyId(sku, tenant.getCompanyId())
+                .filter(existing -> productId == null || !existing.getId().equals(productId))
+                .ifPresent(existing -> {
+                    throw new IllegalStateException("El SKU " + sku + " ya está registrado para otro producto");
+                });
+    }
+
+    private ProductResponse.SupplierCostResponse toSupplierResponse(ProductSupplier relation) {
+        Supplier supplier = suppliers.findByIdAndCompanyId(relation.getSupplierId(), relation.getCompanyId()).orElse(null);
+        return new ProductResponse.SupplierCostResponse(
+                relation.getSupplierId(), supplier == null ? null : supplier.getName(),
+                relation.getUnitCost(), relation.getPreferred());
+    }
+
+    private ProductResponse toResponse(Product p) {
+        Category c = p.getCategory();
+        List<ProductResponse.SupplierCostResponse> supplierCosts = productSuppliers
+                .findByCompanyIdAndProductIdOrderByPreferredDesc(p.getCompanyId(), p.getId())
+                .stream().map(this::toSupplierResponse).toList();
+        return new ProductResponse(
+                p.getId(), p.getSku(), p.getName(),
+                c != null ? c.getId() : null,
+                c != null ? c.getName() : null,
+                p.getPrice(), p.getCost(), p.getAvgCost(),
+                p.getUnit(), p.getPurchaseUnit(), p.getPurchaseFactor(),
+                p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus(), supplierCosts
+        );
+    }
+
     private Category resolveCategory(Long categoryId) {
         if (categoryId == null) {
             return null;
@@ -124,15 +245,4 @@ public class ProductService {
                 .orElseThrow(() -> new ResourceNotFoundException("Producto " + id + " no encontrado"));
     }
 
-    private static ProductResponse toResponse(Product p) {
-        Category c = p.getCategory();
-        return new ProductResponse(
-                p.getId(), p.getSku(), p.getName(),
-                c != null ? c.getId() : null,
-                c != null ? c.getName() : null,
-                p.getPrice(), p.getCost(), p.getAvgCost(),
-                p.getUnit(), p.getPurchaseUnit(), p.getPurchaseFactor(),
-                p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus()
-        );
-    }
 }

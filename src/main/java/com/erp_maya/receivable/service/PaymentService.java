@@ -86,6 +86,7 @@ public class PaymentService {
             sales.findByIdAndCompanyId(req.saleId(), companyId).ifPresent(p::setSale);
         }
         p.setProjectId(req.projectId());
+        p.setQuoteId(req.quoteId());
 
         // Sin cuenta, una transferencia entra en cuentas por cobrar pero no
         // aparece en ningún banco, y la conciliación no cuadra nunca.
@@ -117,7 +118,7 @@ public class PaymentService {
             payments.update(saved);
         }
 
-        contabilizar(saved, client.getName());
+        contabilizar(saved, client.getName(), req.cashAccountId());
 
         // Antes aquí se restaba `client.balance`. Ya no: el saldo se deriva en
         // v_client_balance (046). Mantener además un contador era tener dos
@@ -137,7 +138,7 @@ public class PaymentService {
      * salde. Sin IVA: ese ya lo devengó la factura al emitirse, y volver a
      * registrarlo aquí lo pagaría dos veces.
      */
-    private void contabilizar(Payment p, String clientName) {
+    private void contabilizar(Payment p, String clientName, Long cashAccountId) {
         if (p.getAmount() == null || p.getAmount().signum() == 0) return;
 
         // A dónde entró el dinero. El cheque se trata como caja: está en la
@@ -146,8 +147,16 @@ public class PaymentService {
         String ref = p.getReceiptNumber();
         String desc = "Cobro " + ref + " · " + clientName;
 
+        // Para caja/cheque el usuario pudo elegir una cuenta de caja concreta en
+        // el cobro; si la eligió, esa gana sobre la cuenta por defecto del rol.
+        // Una transferencia ya tiene su cuenta vía el banco, así que ahí no aplica.
+        Long debitAccountId = p.getBankAccountId() == null ? cashAccountId : null;
+        PostingService.Line debitLine = debitAccountId != null
+                ? PostingService.Line.debitAccount(destino, debitAccountId, p.getAmount(), desc, null)
+                : PostingService.Line.debit(destino, p.getAmount(), desc, null);
+
         posting.post("payment", p.getId(), p.getPaymentDate(), desc, ref, PostingService.lines(
-                PostingService.Line.debit(destino, p.getAmount(), desc, null),
+                debitLine,
                 PostingService.Line.credit("posting.receivable", p.getAmount(), desc, null)));
     }
 
@@ -175,6 +184,6 @@ public class PaymentService {
                 p.getProjectId(),
                 p.getAmount(), p.getPaymentDate(), p.getMethod(), p.getReference(), p.getNotes(),
                 p.getReceiptNumber(), p.getReceiptPrintedAt(),
-                p.getBankAccountId(), p.getBankMovementId());
+                p.getBankAccountId(), p.getBankMovementId(), p.getQuoteId());
     }
 }

@@ -3,6 +3,7 @@ package com.erp_maya.catalog.dto;
 import io.micronaut.serde.annotation.Serdeable;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Serdeable
 public record ProductResponse(
@@ -20,6 +21,11 @@ public record ProductResponse(
         String itemType,
         Boolean tracksStock,
         BigDecimal minStock,
-        String status
+        String status,
+        List<SupplierCostResponse> suppliers
 ) {
+
+    @Serdeable
+    public record SupplierCostResponse(Long supplierId, String supplierName,
+                                       BigDecimal unitCost, Boolean preferred) {}
 }

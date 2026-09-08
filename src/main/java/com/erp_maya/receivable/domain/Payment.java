@@ -41,6 +41,10 @@ public class Payment {
     @Column(name = "project_id")
     private Long projectId;
 
+    /** Cotización a la que se imputa el cobro. El cobro es por cotización; el proyecto solo agrega. */
+    @Column(name = "quote_id")
+    private Long quoteId;
+
     /** Cuenta a la que entró el dinero. Solo transferencia y depósito. */
     @Column(name = "bank_account_id")
     private Long bankAccountId;
@@ -98,6 +102,9 @@ public class Payment {
 
     public Long getProjectId() { return projectId; }
     public void setProjectId(Long projectId) { this.projectId = projectId; }
+
+    public Long getQuoteId() { return quoteId; }
+    public void setQuoteId(Long quoteId) { this.quoteId = quoteId; }
 
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
