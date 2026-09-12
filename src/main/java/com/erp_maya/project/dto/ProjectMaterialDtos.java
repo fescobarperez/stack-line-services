@@ -28,13 +28,16 @@ public class ProjectMaterialDtos {
     public record MoveMaterialRequest(Long groupId) {}
 
     @Serdeable
+    public record UpdateMaterialQuantityRequest(@NotNull BigDecimal quantityPlanned) {}
+
+    @Serdeable
     public record MaterialResponse(Long id, Long groupId, Long productId,
                                    String sku, String productName,
                                    BigDecimal quantityPlanned, String uom,
                                    Long supplierId, String supplierName,
                                    BigDecimal unitCostSnapshot, BigDecimal estimatedAmount,
                                    String status, String notes, Instant costSnapshotAt,
-                                   Long quoteId) {}
+                                   Long quoteId, String quoteStatus, String quoteDocNumber) {}
 
     @Serdeable
     public record GroupResponse(Long id, Long parentGroupId, String name,

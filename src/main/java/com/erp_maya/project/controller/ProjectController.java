@@ -82,6 +82,13 @@ public class ProjectController {
         return materialService.moveMaterial(id, materialId, request);
     }
 
+    @Put("/{id}/materials/{materialId}/quantity")
+    public ProjectMaterialDtos.MaterialResponse updateMaterialQuantity(
+            Long id, Long materialId,
+            @Valid @Body ProjectMaterialDtos.UpdateMaterialQuantityRequest request) {
+        return materialService.updateMaterialQuantity(id, materialId, request);
+    }
+
     @Put("/{id}/material-groups/{groupId}/parent")
     public ProjectMaterialDtos.GroupResponse moveMaterialGroup(Long id, Long groupId,
                                                                  @Body ProjectMaterialDtos.MoveGroupRequest request) {
