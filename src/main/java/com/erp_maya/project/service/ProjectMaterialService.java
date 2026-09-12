@@ -15,6 +15,8 @@ import com.erp_maya.project.dto.ProjectMaterialDtos;
 import com.erp_maya.project.repository.ProjectMaterialRepositories.Groups;
 import com.erp_maya.project.repository.ProjectMaterialRepositories.Materials;
 import com.erp_maya.project.repository.ProjectRepositories.Projects;
+import com.erp_maya.quote.domain.Quote;
+import com.erp_maya.quote.repository.QuoteRepository;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
@@ -38,17 +40,19 @@ public class ProjectMaterialService {
     private final ProductRepository products;
     private final ProductSupplierRepository productSuppliers;
     private final SupplierRepository suppliers;
+    private final QuoteRepository quotes;
     private final TenantContext tenant;
 
     public ProjectMaterialService(Projects projects, Groups groups, Materials materials,
                                   ProductRepository products, ProductSupplierRepository productSuppliers,
-                                  SupplierRepository suppliers, TenantContext tenant) {
+                                  SupplierRepository suppliers, QuoteRepository quotes, TenantContext tenant) {
         this.projects = projects;
         this.groups = groups;
         this.materials = materials;
         this.products = products;
         this.productSuppliers = productSuppliers;
         this.suppliers = suppliers;
+        this.quotes = quotes;
         this.tenant = tenant;
     }
 
@@ -60,10 +64,24 @@ public class ProjectMaterialService {
                 .findByCompanyIdAndProjectIdOrderBySortOrderAsc(companyId, projectId);
         List<ProjectMaterial> materialRows = materials
                 .findByCompanyIdAndProjectIdOrderByIdAsc(companyId, projectId);
+        List<Long> quoteIds = materialRows.stream()
+                .map(ProjectMaterial::getQuoteId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        List<Quote> quoteRows = quoteIds.isEmpty() ? List.of()
+                : quotes.findByCompanyIdAndIdIn(companyId, quoteIds);
+        Map<Long, String> quoteStatuses = quoteRows.stream()
+                .collect(Collectors.toMap(Quote::getId, Quote::getStatus));
+        Map<Long, String> quoteDocNumbers = quoteRows.stream()
+                .collect(Collectors.toMap(Quote::getId, Quote::getDocNumber));
 
         Map<Long, List<ProjectMaterialDtos.MaterialResponse>> byGroup = materialRows.stream()
                 .filter(material -> material.getGroupId() != null)
-                .map(this::toMaterialResponse)
+                .map(material -> toMaterialResponse(
+                        material,
+                        quoteStatuses.get(material.getQuoteId()),
+                        quoteDocNumbers.get(material.getQuoteId())))
                 .collect(Collectors.groupingBy(ProjectMaterialDtos.MaterialResponse::groupId));
         Map<Long, BigDecimal> directGroupTotals = byGroup.entrySet().stream()
                 .collect(Collectors.toMap(
@@ -91,7 +109,10 @@ public class ProjectMaterialService {
                 .toList();
         List<ProjectMaterialDtos.MaterialResponse> ungrouped = materialRows.stream()
                 .filter(material -> material.getGroupId() == null)
-                .map(this::toMaterialResponse)
+                .map(material -> toMaterialResponse(
+                        material,
+                        quoteStatuses.get(material.getQuoteId()),
+                        quoteDocNumbers.get(material.getQuoteId())))
                 .toList();
         BigDecimal total = materialRows.stream().map(this::estimatedAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -185,6 +206,33 @@ public class ProjectMaterialService {
             }
         }
         material.setGroupId(groupId);
+        return toMaterialResponse(materials.save(material));
+    }
+
+    @Transactional
+    public ProjectMaterialDtos.MaterialResponse updateMaterialQuantity(
+            Long projectId, Long materialId,
+            ProjectMaterialDtos.UpdateMaterialQuantityRequest req) {
+        Project project = mutableProject(projectId);
+        Long companyId = project.getCompanyId();
+        ProjectMaterial material = materials.findByIdAndCompanyId(materialId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Material " + materialId + " no encontrado"));
+        if (!projectId.equals(material.getProjectId())) {
+            throw new IllegalStateException("El material no pertenece a este proyecto");
+        }
+        if (material.getQuoteId() != null) {
+            Quote quote = quotes.findByIdAndCompanyId(material.getQuoteId(), companyId)
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "Cotización " + material.getQuoteId() + " no encontrada"));
+            if (!isDraftQuoteStatus(quote.getStatus())) {
+                throw new IllegalStateException(
+                        "La cantidad no puede cambiar porque la cotización " + quote.getDocNumber() + " ya fue enviada");
+            }
+        }
+        if (req.quantityPlanned() == null || req.quantityPlanned().signum() <= 0) {
+            throw new IllegalStateException("La cantidad planificada debe ser mayor que cero");
+        }
+        material.setQuantityPlanned(req.quantityPlanned());
         return toMaterialResponse(materials.save(material));
     }
 
@@ -375,6 +423,17 @@ public class ProjectMaterialService {
     }
 
     private ProjectMaterialDtos.MaterialResponse toMaterialResponse(ProjectMaterial material) {
+        Quote quote = material.getQuoteId() == null ? null : quotes
+                .findByIdAndCompanyId(material.getQuoteId(), material.getCompanyId())
+                .orElse(null);
+        return toMaterialResponse(
+                material,
+                quote == null ? null : quote.getStatus(),
+                quote == null ? null : quote.getDocNumber());
+    }
+
+    private ProjectMaterialDtos.MaterialResponse toMaterialResponse(
+            ProjectMaterial material, String quoteStatus, String quoteDocNumber) {
         Product product = products.findByIdAndCompanyId(material.getProductId(), material.getCompanyId()).orElse(null);
         Supplier supplier = material.getSupplierId() == null ? null
                 : suppliers.findByIdAndCompanyId(material.getSupplierId(), material.getCompanyId()).orElse(null);
@@ -383,7 +442,11 @@ public class ProjectMaterialService {
                 material.getQuantityPlanned(), material.getUom(), material.getSupplierId(),
                 supplier == null ? null : supplier.getName(), material.getUnitCostSnapshot(), estimatedAmount(material),
                 material.getStatus(), material.getNotes(), material.getCostSnapshotAt(),
-                material.getQuoteId());
+                material.getQuoteId(), quoteStatus, quoteDocNumber);
+    }
+
+    private boolean isDraftQuoteStatus(String status) {
+        return "borrador".equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status);
     }
 
     private BigDecimal estimatedAmount(ProjectMaterial material) {
