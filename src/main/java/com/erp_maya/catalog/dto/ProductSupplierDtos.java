@@ -12,4 +12,9 @@ public class ProductSupplierDtos {
     public record Request(@NotNull Long supplierId,
                           @NotNull @DecimalMin("0.01") BigDecimal unitCost,
                           Boolean preferred) {}
+
+    /** Edición de una relación existente: el proveedor ya viene en la ruta. */
+    @Serdeable
+    public record Update(@NotNull @DecimalMin("0.01") BigDecimal unitCost,
+                         Boolean preferred) {}
 }

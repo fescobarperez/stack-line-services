@@ -121,6 +121,88 @@ public class ProductService {
         return toResponse(product);
     }
 
+    /**
+     * Cambia el costo o la preferencia de un proveedor ya asociado.
+     *
+     * Sin esto la relación era de solo alta: la única forma de mover un costo
+     * era el PUT del producto, que solo alcanza al proveedor preferido.
+     */
+    @Transactional
+    public ProductResponse updateSupplier(Long productId, Long supplierId, ProductSupplierDtos.Update req) {
+        Product product = find(productId);
+        Long companyId = tenant.getCompanyId();
+        ProductSupplier relation = productSuppliers
+                .findByCompanyIdAndProductIdAndSupplierId(companyId, productId, supplierId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "El proveedor " + supplierId + " no está asociado a este producto"));
+        relation.setUnitCost(req.unitCost());
+        boolean preferred = req.preferred() != null ? req.preferred() : relation.getPreferred();
+        if (preferred && !Boolean.TRUE.equals(relation.getPreferred())) {
+            desmarcarPreferidos(companyId, productId, relation.getId());
+        }
+        relation.setPreferred(preferred);
+        productSuppliers.save(relation);
+        if (preferred) {
+            product.setCost(req.unitCost());
+            products.update(product);
+        }
+        return toResponse(product);
+    }
+
+    /**
+     * Rompe la asociación producto–proveedor.
+     *
+     * Una materia prima no puede quedarse sin proveedor: es la misma invariante
+     * que `syncSupplier` exige al crearla. Y si se va el preferido, otro toma
+     * su lugar, porque el costo del producto sale de ahí.
+     */
+    @Transactional
+    public ProductResponse removeSupplier(Long productId, Long supplierId) {
+        Product product = find(productId);
+        Long companyId = tenant.getCompanyId();
+        ProductSupplier relation = productSuppliers
+                .findByCompanyIdAndProductIdAndSupplierId(companyId, productId, supplierId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "El proveedor " + supplierId + " no está asociado a este producto"));
+        List<ProductSupplier> restantes = productSuppliers
+                .findByCompanyIdAndProductIdOrderByPreferredDesc(companyId, productId)
+                .stream().filter(otra -> !otra.getId().equals(relation.getId())).toList();
+        if (restantes.isEmpty() && "raw_material".equalsIgnoreCase(product.getItemType())) {
+            throw new IllegalStateException("Una materia prima debe conservar al menos un proveedor");
+        }
+        boolean eraPreferido = Boolean.TRUE.equals(relation.getPreferred());
+        productSuppliers.delete(relation);
+        if (eraPreferido && !restantes.isEmpty()) {
+            ProductSupplier sucesor = restantes.get(0);
+            sucesor.setPreferred(true);
+            productSuppliers.save(sucesor);
+            product.setCost(sucesor.getUnitCost());
+            products.update(product);
+        }
+        return toResponse(product);
+    }
+
+    /** Catálogo que vende un proveedor: la relación leída desde el otro extremo. */
+    @Transactional
+    public List<ProductResponse> listBySupplier(Long supplierId) {
+        Long companyId = tenant.getCompanyId();
+        suppliers.findByIdAndCompanyId(supplierId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Proveedor " + supplierId + " no encontrado"));
+        return productSuppliers.findByCompanyIdAndSupplierIdOrderByProductId(companyId, supplierId)
+                .stream()
+                .map(relation -> products.findByIdAndCompanyId(relation.getProductId(), companyId).orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .map(this::toResponse)
+                .toList();
+    }
+
+    private void desmarcarPreferidos(Long companyId, Long productId, Long exceptoId) {
+        productSuppliers.findByCompanyIdAndProductIdOrderByPreferredDesc(companyId, productId).stream()
+                .filter(otra -> !otra.getId().equals(exceptoId))
+                .filter(otra -> Boolean.TRUE.equals(otra.getPreferred()))
+                .forEach(otra -> { otra.setPreferred(false); productSuppliers.save(otra); });
+    }
+
     @Transactional
     public ProductResponse update(Long id, ProductRequest req) {
         Product p = find(id);

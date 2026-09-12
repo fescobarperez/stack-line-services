@@ -19,6 +19,8 @@ import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.http.annotation.Status;
 import jakarta.validation.Valid;
 
+import java.util.List;
+
 @Controller("/api/products")
 public class ProductController {
 
@@ -50,6 +52,28 @@ public class ProductController {
     @Status(HttpStatus.CREATED)
     public ProductResponse addSupplier(Long id, @Valid @Body ProductSupplierDtos.Request request) {
         return service.addSupplier(id, request);
+    }
+
+    /**
+     * La relación se lee también desde el proveedor: qué productos vende.
+     *
+     * Vive aquí y no en SupplierController porque catalog ya depende de
+     * partner; al revés se cerraría el ciclo entre los dos módulos.
+     */
+    @Get("/by-supplier/{supplierId}")
+    public List<ProductResponse> listBySupplier(Long supplierId) {
+        return service.listBySupplier(supplierId);
+    }
+
+    @Put("/{id}/suppliers/{supplierId}")
+    public ProductResponse updateSupplier(Long id, Long supplierId,
+                                          @Valid @Body ProductSupplierDtos.Update request) {
+        return service.updateSupplier(id, supplierId, request);
+    }
+
+    @Delete("/{id}/suppliers/{supplierId}")
+    public ProductResponse removeSupplier(Long id, Long supplierId) {
+        return service.removeSupplier(id, supplierId);
     }
 
     @Put("/{id}/category")
