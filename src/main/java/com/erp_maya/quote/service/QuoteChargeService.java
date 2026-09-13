@@ -5,6 +5,7 @@ import com.erp_maya.common.TenantContext;
 import com.erp_maya.project.domain.ProjectMaterial;
 import com.erp_maya.project.repository.ProjectMaterialRepositories.Materials;
 import com.erp_maya.quote.domain.ChargeCategory;
+import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteCharge;
 import com.erp_maya.quote.dto.QuoteChargeDtos;
 import com.erp_maya.quote.repository.ChargeCategoryRepository;
@@ -334,7 +335,7 @@ public class QuoteChargeService {
                 ? money(operatingCost.multiply(profitValue).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
                 : profitValue;
         BigDecimal taxableSubtotal = money(operatingCost.add(profitAmount));
-        BigDecimal taxRate = quote.getTaxRate() == null ? taxService.rate() : quote.getTaxRate();
+        BigDecimal taxRate = rateFor(quote);
         BigDecimal tax = money(taxableSubtotal.multiply(taxRate)
                 .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
         BigDecimal total = money(taxableSubtotal.add(tax));
@@ -342,6 +343,7 @@ public class QuoteChargeService {
         quote.setProfitCalcType(profitCalcType);
         quote.setProfitValue(profitValue);
         quote.setProfitAmount(profitAmount);
+        quote.setTaxRate(taxRate);
         quote.setSubtotal(taxableSubtotal);
         quote.setTax(tax);
         quote.setTotal(total);
@@ -367,6 +369,22 @@ public class QuoteChargeService {
         if (c.getCategoryId() == null) return false;
         ChargeCategory cat = catalogo.get(c.getCategoryId());
         return cat != null && Boolean.TRUE.equals(cat.getOperating());
+    }
+
+    /**
+     * La tasa que aplica a este documento.
+     *
+     * Un BORRADOR todavía se está armando: si la empresa cambia su IVA, sus
+     * cotizaciones abiertas tienen que reflejarlo, y hasta ahora no lo hacían
+     * —quedaban con la tasa del día en que se crearon aunque nadie las hubiera
+     * enviado—. Desde que sale al cliente se congela: ese número ya lo vio
+     * alguien y el documento no puede moverse solo.
+     */
+    public BigDecimal rateFor(Quote quote) {
+        if ("borrador".equalsIgnoreCase(quote.getStatus())) {
+            return taxService.rate();
+        }
+        return quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate();
     }
 
     private BigDecimal materialAmount(ProjectMaterial m) {

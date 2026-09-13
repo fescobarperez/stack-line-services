@@ -249,7 +249,9 @@ public class ProjectQuoteBuilderService {
             total = total.add(sellPrice);
         }
 
-        BigDecimal rate = quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate();
+        BigDecimal rate = "borrador".equalsIgnoreCase(quote.getStatus())
+                ? taxService.rate()
+                : (quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate());
         BigDecimal tax = total.multiply(rate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
         quote.setTaxRate(rate);
         quote.setSubtotal(total);

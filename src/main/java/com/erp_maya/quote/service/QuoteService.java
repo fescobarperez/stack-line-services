@@ -249,8 +249,9 @@ public class QuoteService {
         }
         quote.getItems().removeIf(item -> !keptItemIds.contains(item.getId()));
 
-        BigDecimal taxRate = quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate();
+        BigDecimal taxRate = quoteCharges.rateFor(quote);
         BigDecimal tax = subtotal.multiply(taxRate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+        quote.setTaxRate(taxRate);
         quote.setQuoteDate(quoteDate);
         quote.setSubtotal(subtotal);
         quote.setTax(tax);
