@@ -2,6 +2,7 @@ package com.erp_maya.quote.dto;
 
 import io.micronaut.serde.annotation.Serdeable;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
@@ -17,6 +18,23 @@ public final class QuotePlanDtos {
     public record TermRequest(Integer sequence,
                               @NotNull @DecimalMin(value = "0.01", message = "El monto de la cuota debe ser mayor a cero") BigDecimal amount,
                               LocalDate dueDate, String notes) {}
+
+    /**
+     * Generación automática del plan: en vez de teclear cuota por cuota se
+     * indica en cuántas se parte y el backend calcula los montos.
+     *
+     * `frequency`: semanal · quincenal · mensual · dias (con `everyDays`).
+     * Sin `startDate` las cuotas salen sin fecha límite, como hoy.
+     * El anticipo es opcional y va como primera cuota; `advanceCalcType` es
+     * 'fixed' o 'percent', igual que en los cargos y en la utilidad.
+     */
+    @Serdeable
+    public record GenerateRequest(@NotNull @Min(1) Integer installments,
+                                  String frequency,
+                                  Integer everyDays,
+                                  LocalDate startDate,
+                                  String advanceCalcType,
+                                  BigDecimal advanceValue) {}
 
     @Serdeable
     public record TermResponse(Long id, Integer sequence, BigDecimal amount, LocalDate dueDate, String notes) {}

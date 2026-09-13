@@ -88,6 +88,16 @@ public class QuoteController {
         return plan.addTerm(id, request);
     }
 
+    /**
+     * Reparte el total en N cuotas y reemplaza el plan. Bloquea si ya hay
+     * cobros: borrar las cuotas contra las que alguien pagó dejaría los pagos
+     * sin el plan que los justifica.
+     */
+    @Post("/{id}/plan/generate")
+    public QuotePlanDtos.Plan generatePlan(Long id, @Valid @Body QuotePlanDtos.GenerateRequest request) {
+        return plan.generate(id, request);
+    }
+
     @Delete("/{id}/plan/terms/{termId}")
     public QuotePlanDtos.Plan deleteTerm(Long id, Long termId) {
         return plan.deleteTerm(id, termId);

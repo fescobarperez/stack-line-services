@@ -16,6 +16,7 @@ import jakarta.transaction.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -73,6 +74,111 @@ public class QuotePlanService {
         term.setNotes(req.notes());
         terms.save(term);
         return build(quoteId, companyId);
+    }
+
+    /**
+     * Rehace el plan repartiendo el total en N cuotas.
+     *
+     * Reemplaza lo que hubiera: un plan mitad manual y mitad generado no lo
+     * sabe explicar nadie. Por eso se bloquea si ya hay cobros imputados —
+     * borrar las cuotas contra las que alguien ya pagó dejaría los pagos
+     * huérfanos del plan que los justificaba.
+     *
+     * El residuo del redondeo va a la PRIMERA cuota, no a la última: es la
+     * práctica del medio y deja las siguientes en cifras parejas, que es lo
+     * que el cliente ve en el papel.
+     *
+     *   Q 1,000.00 en 3  →  Q 333.34 + Q 333.33 + Q 333.33
+     */
+    @Transactional
+    public QuotePlanDtos.Plan generate(Long quoteId, QuotePlanDtos.GenerateRequest req) {
+        Long companyId = tenant.getCompanyId();
+        Quote quote = requireQuote(quoteId, companyId);
+
+        BigDecimal cobrado = payments.findByCompanyIdAndQuoteIdOrderByPaymentDateDesc(companyId, quoteId)
+                .stream().map(Payment::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (cobrado.signum() > 0) {
+            throw new IllegalStateException("La cotización ya tiene cobros por " + money(cobrado)
+                    + "; el plan no se puede regenerar. Elimina los cobros o ajusta las cuotas a mano.");
+        }
+
+        BigDecimal total = quoteTotal(quote, companyId);
+        if (total.signum() <= 0) {
+            throw new IllegalStateException("La cotización no tiene total que repartir");
+        }
+
+        BigDecimal anticipo = calcularAnticipo(req, total);
+        BigDecimal resto = money(total.subtract(anticipo));
+        if (resto.signum() <= 0) {
+            throw new IllegalStateException("El anticipo no puede cubrir el total: no quedarían cuotas que generar");
+        }
+
+        int cuotas = req.installments();
+        // DOWN y no HALF_UP: así el residuo nunca es negativo y siempre sobra
+        // algo para cargarle a la primera, en vez de quedar debiendo centavos.
+        BigDecimal base = resto.divide(BigDecimal.valueOf(cuotas), 2, RoundingMode.DOWN);
+        BigDecimal residuo = money(resto.subtract(base.multiply(BigDecimal.valueOf(cuotas))));
+
+        terms.deleteAll(terms.findByCompanyIdAndQuoteIdOrderBySequenceAsc(companyId, quoteId));
+
+        int secuencia = 1;
+        LocalDate inicio = req.startDate();
+        if (anticipo.signum() > 0) {
+            guardarCuota(companyId, quoteId, secuencia++, anticipo, inicio, "Anticipo");
+        }
+        for (int i = 0; i < cuotas; i++) {
+            BigDecimal monto = i == 0 ? money(base.add(residuo)) : base;
+            // Con anticipo la primera cuota cae un período después: el anticipo
+            // ya ocupó la fecha inicial.
+            int periodos = anticipo.signum() > 0 ? i + 1 : i;
+            LocalDate vence = inicio == null ? null : desplazar(inicio, periodos, req);
+            guardarCuota(companyId, quoteId, secuencia++, monto, vence,
+                    "Cuota " + (i + 1) + " de " + cuotas);
+        }
+        return build(quoteId, companyId);
+    }
+
+    private BigDecimal calcularAnticipo(QuotePlanDtos.GenerateRequest req, BigDecimal total) {
+        BigDecimal valor = req.advanceValue();
+        if (valor == null || valor.signum() <= 0) return BigDecimal.ZERO;
+        BigDecimal anticipo = "percent".equalsIgnoreCase(req.advanceCalcType())
+                ? money(total.multiply(valor).divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP))
+                : money(valor);
+        if (anticipo.compareTo(total) >= 0) {
+            throw new IllegalStateException("El anticipo (" + money(anticipo)
+                    + ") no puede ser igual o mayor al total de la cotización (" + money(total) + ")");
+        }
+        return anticipo;
+    }
+
+    /** Fecha de la cuota número `periodos` contando desde la inicial. */
+    private LocalDate desplazar(LocalDate inicio, int periodos, QuotePlanDtos.GenerateRequest req) {
+        String frecuencia = req.frequency() == null ? "mensual" : req.frequency().trim().toLowerCase();
+        return switch (frecuencia) {
+            case "semanal" -> inicio.plusWeeks(periodos);
+            case "quincenal" -> inicio.plusDays(15L * periodos);
+            case "dias" -> {
+                Integer cada = req.everyDays();
+                if (cada == null || cada < 1) {
+                    throw new IllegalStateException("Indica cada cuántos días vence cada cuota");
+                }
+                yield inicio.plusDays((long) cada * periodos);
+            }
+            case "mensual" -> inicio.plusMonths(periodos);
+            default -> throw new IllegalStateException("Frecuencia no válida: " + req.frequency());
+        };
+    }
+
+    private void guardarCuota(Long companyId, Long quoteId, int secuencia,
+                              BigDecimal monto, LocalDate vence, String notas) {
+        QuotePaymentTerm cuota = new QuotePaymentTerm();
+        cuota.setCompanyId(companyId);
+        cuota.setQuoteId(quoteId);
+        cuota.setSequence(secuencia);
+        cuota.setAmount(monto);
+        cuota.setDueDate(vence);
+        cuota.setNotes(notas);
+        terms.save(cuota);
     }
 
     /** El borrador puede estar incompleto; enviar al cliente exige igualdad exacta. */
