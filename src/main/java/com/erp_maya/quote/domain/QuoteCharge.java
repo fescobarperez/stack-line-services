@@ -31,7 +31,8 @@ public class QuoteCharge {
     @Column(name = "quote_id", nullable = false)
     private Long quoteId;
 
-    private String category;
+    @Column(name = "category_id")
+    private Long categoryId;
 
     @Column(nullable = false)
     private String description;
@@ -62,8 +63,8 @@ public class QuoteCharge {
     public void setCompanyId(Long companyId) { this.companyId = companyId; }
     public Long getQuoteId() { return quoteId; }
     public void setQuoteId(Long quoteId) { this.quoteId = quoteId; }
-    public String getCategory() { return category; }
-    public void setCategory(String category) { this.category = category; }
+    public Long getCategoryId() { return categoryId; }
+    public void setCategoryId(Long categoryId) { this.categoryId = categoryId; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public String getCalcType() { return calcType; }

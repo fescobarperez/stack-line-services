@@ -11,4 +11,7 @@ import java.util.Optional;
 public interface QuoteChargeRepository extends JpaRepository<QuoteCharge, Long> {
     List<QuoteCharge> findByCompanyIdAndQuoteIdOrderBySortOrderAsc(Long companyId, Long quoteId);
     Optional<QuoteCharge> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Para no dejar borrar un concepto de gasto que ya está en uso. */
+    long countByCompanyIdAndCategoryId(Long companyId, Long categoryId);
 }

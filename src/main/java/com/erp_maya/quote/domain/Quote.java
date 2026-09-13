@@ -78,6 +78,10 @@ public class Quote {
     @Column(name = "project_id")
     private Long projectId;
 
+    /** 'single' = un monto; 'detailed' = partidas separadas. */
+    @Column(name = "operating_expense_mode", nullable = false)
+    private String operatingExpenseMode = "single";
+
     private String notes;
 
     /** 'client' (cotización a cliente) | 'supplier' (RFQ a proveedor). */
@@ -177,6 +181,8 @@ public class Quote {
 
     public Long getProjectId() { return projectId; }
     public void setProjectId(Long projectId) { this.projectId = projectId; }
+    public String getOperatingExpenseMode() { return operatingExpenseMode; }
+    public void setOperatingExpenseMode(String operatingExpenseMode) { this.operatingExpenseMode = operatingExpenseMode; }
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }

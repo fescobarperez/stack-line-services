@@ -276,7 +276,7 @@ public class ProjectDuplicationService {
                 QuoteCharge cargo = new QuoteCharge();
                 cargo.setCompanyId(companyId);
                 cargo.setQuoteId(guardada.getId());
-                cargo.setCategory(cargoFuente.getCategory());
+                cargo.setCategoryId(cargoFuente.getCategoryId());
                 cargo.setDescription(cargoFuente.getDescription());
                 cargo.setCalcType(cargoFuente.getCalcType());
                 cargo.setValue(cargoFuente.getValue());

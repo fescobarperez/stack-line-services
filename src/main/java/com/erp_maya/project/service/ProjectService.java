@@ -465,17 +465,18 @@ public class ProjectService {
                                 .filter(m -> link.getQuoteId().equals(m.getQuoteId()))
                                 .map(this::plannedMaterialAmount)
                                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-                        // Cargos manuales de esta cotización.
-                        List<ProjectDtos.QuoteChargeRef> qCharges = quoteChargeRepository
-                                .findByCompanyIdAndQuoteIdOrderBySortOrderAsc(p.getCompanyId(), link.getQuoteId())
-                                .stream()
-                                .map(c -> new ProjectDtos.QuoteChargeRef(c.getCategory(), c.getDescription(),
-                                        c.getCalcType(), money(c.getComputedAmount())))
+                        // Cargos manuales de esta cotización. Salen del resumen y no
+                        // del repositorio: desde que la categoría es un id, el nombre
+                        // legible lo resuelve QuoteChargeService, y de paso se ahorra
+                        // una consulta que repetía lo que getSummary ya trae.
+                        QuoteChargeDtos.Summary pricing = quoteCharges.getSummary(link.getQuoteId());
+                        List<ProjectDtos.QuoteChargeRef> qCharges = pricing.charges().stream()
+                                .map(c -> new ProjectDtos.QuoteChargeRef(c.category(), c.description(),
+                                        c.calcType(), money(c.computedAmount())))
                                 .toList();
                         BigDecimal chargesSum = qCharges.stream()
                                 .map(ProjectDtos.QuoteChargeRef::computedAmount)
                                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-                        QuoteChargeDtos.Summary pricing = quoteCharges.getSummary(link.getQuoteId());
                         return new ProjectDtos.QuoteRef(
                                 link.getQuoteId(),
                                 q != null ? q.getDocNumber() : ("COT-" + link.getQuoteId()),

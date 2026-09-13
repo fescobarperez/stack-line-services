@@ -2,6 +2,8 @@ package com.erp_maya.quote.controller;
 
 import com.erp_maya.quote.dto.QuoteDtos;
 import com.erp_maya.quote.dto.QuoteChargeDtos;
+
+import java.util.List;
 import com.erp_maya.quote.dto.QuotePlanDtos;
 import com.erp_maya.quote.service.QuoteService;
 import com.erp_maya.quote.service.QuoteChargeService;
@@ -77,6 +79,48 @@ public class QuoteController {
     }
 
     // ── Plan de pagos y cobros de la cotización ───────────────────────────
+    /**
+     * Catálogo de categorías de gasto. Segmento literal: "charge-categories"
+     * no convierte a Long, así que no compite con @Get("/{id}").
+     */
+    @Get("/charge-categories")
+    public List<QuoteChargeDtos.CategoryResponse> chargeCategories() {
+        return charges.listCategories();
+    }
+
+    /** Cambia entre monto único y desglose para el gasto operativo. */
+    @Put("/{id}/operating-mode")
+    public QuoteChargeDtos.Summary setOperatingMode(
+            Long id, @Valid @Body QuoteChargeDtos.OperatingModeRequest request) {
+        return charges.setOperatingMode(id, request.mode());
+    }
+
+    /** Fija el gasto operativo como una sola cifra; cero lo elimina. */
+    @Put("/{id}/operating-expense")
+    public QuoteChargeDtos.Summary setOperatingAmount(
+            Long id, @Valid @Body QuoteChargeDtos.OperatingAmountRequest request) {
+        return charges.setOperatingAmount(id, request);
+    }
+
+    @Post("/charge-categories")
+    @Status(HttpStatus.CREATED)
+    public QuoteChargeDtos.CategoryResponse createChargeCategory(
+            @Valid @Body QuoteChargeDtos.CategoryRequest request) {
+        return charges.createCategory(request);
+    }
+
+    @Put("/charge-categories/{id}")
+    public QuoteChargeDtos.CategoryResponse updateChargeCategory(
+            Long id, @Valid @Body QuoteChargeDtos.CategoryRequest request) {
+        return charges.updateCategory(id, request);
+    }
+
+    @Delete("/charge-categories/{id}")
+    @Status(HttpStatus.NO_CONTENT)
+    public void deleteChargeCategory(Long id) {
+        charges.deleteCategory(id);
+    }
+
     @Get("/{id}/plan")
     public QuotePlanDtos.Plan plan(Long id) {
         return plan.getPlan(id);
