@@ -4,7 +4,9 @@ import com.erp_maya.catalog.dto.ProductCategoryRequest;
 import com.erp_maya.catalog.dto.ProductRequest;
 import com.erp_maya.catalog.dto.ProductResponse;
 import com.erp_maya.catalog.dto.ProductSupplierDtos;
+import com.erp_maya.catalog.dto.SupplierPriceDtos;
 import com.erp_maya.catalog.service.ProductService;
+import com.erp_maya.catalog.service.SupplierPriceService;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
@@ -25,9 +27,11 @@ import java.util.List;
 public class ProductController {
 
     private final ProductService service;
+    private final SupplierPriceService prices;
 
-    public ProductController(ProductService service) {
+    public ProductController(ProductService service, SupplierPriceService prices) {
         this.service = service;
+        this.prices = prices;
     }
 
     @Get
@@ -63,6 +67,26 @@ public class ProductController {
     @Get("/by-supplier/{supplierId}")
     public List<ProductResponse> listBySupplier(Long supplierId) {
         return service.listBySupplier(supplierId);
+    }
+
+    /** Los proveedores de un producto ordenados por precio, con su variación. */
+    @Get("/{id}/supplier-comparison")
+    public SupplierPriceDtos.ProductComparison compareSuppliers(Long id) {
+        return prices.compareProduct(id);
+    }
+
+    /**
+     * Ranking de proveedores por qué tan buen precio dan en general. Con
+     * `productId` se limita a los que surten ese producto.
+     *
+     * Segmento literal y no colisiona con @Get("/{id}"): "supplier-ranking" no
+     * convierte a Long, y Micronaut resuelve los literales antes que las
+     * variables.
+     */
+    @Get("/supplier-ranking")
+    public List<SupplierPriceDtos.SupplierRankRow> supplierRanking(@Nullable @QueryValue Integer limit,
+                                                                   @Nullable @QueryValue Long productId) {
+        return prices.ranking(limit, productId);
     }
 
     @Put("/{id}/suppliers/{supplierId}")

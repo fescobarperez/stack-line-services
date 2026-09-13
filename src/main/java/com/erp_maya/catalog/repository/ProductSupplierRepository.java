@@ -14,6 +14,9 @@ public interface ProductSupplierRepository extends JpaRepository<ProductSupplier
 
     Optional<ProductSupplier> findByCompanyIdAndProductIdAndSupplierId(Long companyId, Long productId, Long supplierId);
 
+    /** Todas las relaciones de la empresa: base del ranking de proveedores. */
+    List<ProductSupplier> findByCompanyId(Long companyId);
+
     /** El otro lado de la relación: qué productos vende un proveedor. */
     List<ProductSupplier> findByCompanyIdAndSupplierIdOrderByProductId(Long companyId, Long supplierId);
 }

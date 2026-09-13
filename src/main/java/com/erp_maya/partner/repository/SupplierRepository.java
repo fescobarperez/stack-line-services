@@ -16,4 +16,7 @@ public interface SupplierRepository extends JpaRepository<Supplier, Long> {
     Page<Supplier> findByCompanyIdAndNameContainsIgnoreCase(Long companyId, String name, Pageable pageable);
 
     Optional<Supplier> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Sin paginar: para resolver nombres en bloque al comparar precios. */
+    java.util.List<Supplier> findByCompanyId(Long companyId);
 }

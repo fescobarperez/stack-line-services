@@ -3,11 +3,13 @@ package com.erp_maya.catalog.service;
 import com.erp_maya.catalog.domain.Category;
 import com.erp_maya.catalog.domain.Product;
 import com.erp_maya.catalog.domain.ProductSupplier;
+import com.erp_maya.catalog.domain.ProductSupplierPrice;
 import com.erp_maya.catalog.dto.ProductRequest;
 import com.erp_maya.catalog.dto.ProductResponse;
 import com.erp_maya.catalog.dto.ProductSupplierDtos;
 import com.erp_maya.catalog.repository.CategoryRepository;
 import com.erp_maya.catalog.repository.ProductRepository;
+import com.erp_maya.catalog.repository.ProductSupplierPriceRepository;
 import com.erp_maya.catalog.repository.ProductSupplierRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
@@ -19,6 +21,7 @@ import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 /** Lógica de negocio de productos. Todo queda acotado al inquilino actual. */
@@ -28,15 +31,18 @@ public class ProductService {
     private final ProductRepository products;
     private final CategoryRepository categories;
     private final ProductSupplierRepository productSuppliers;
+    private final ProductSupplierPriceRepository priceHistory;
     private final SupplierRepository suppliers;
     private final TenantContext tenant;
 
     public ProductService(ProductRepository products, CategoryRepository categories,
-                          ProductSupplierRepository productSuppliers, SupplierRepository suppliers,
+                          ProductSupplierRepository productSuppliers,
+                          ProductSupplierPriceRepository priceHistory, SupplierRepository suppliers,
                           TenantContext tenant) {
         this.products = products;
         this.categories = categories;
         this.productSuppliers = productSuppliers;
+        this.priceHistory = priceHistory;
         this.suppliers = suppliers;
         this.tenant = tenant;
     }
@@ -114,6 +120,7 @@ public class ProductService {
         relation.setUnitCost(req.unitCost());
         relation.setPreferred(preferred);
         productSuppliers.save(relation);
+        registrarPrecio(relation, null);
         if (preferred || product.getCost() == null || product.getCost().signum() <= 0) {
             product.setCost(req.unitCost());
             products.update(product);
@@ -135,6 +142,7 @@ public class ProductService {
                 .findByCompanyIdAndProductIdAndSupplierId(companyId, productId, supplierId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "El proveedor " + supplierId + " no está asociado a este producto"));
+        BigDecimal costoAnterior = relation.getUnitCost();
         relation.setUnitCost(req.unitCost());
         boolean preferred = req.preferred() != null ? req.preferred() : relation.getPreferred();
         if (preferred && !Boolean.TRUE.equals(relation.getPreferred())) {
@@ -142,6 +150,7 @@ public class ProductService {
         }
         relation.setPreferred(preferred);
         productSuppliers.save(relation);
+        registrarPrecio(relation, costoAnterior);
         if (preferred) {
             product.setCost(req.unitCost());
             products.update(product);
@@ -194,6 +203,42 @@ public class ProductService {
                 .filter(java.util.Objects::nonNull)
                 .map(this::toResponse)
                 .toList();
+    }
+
+    /**
+     * Deja constancia del precio de la relación: cierra el vigente y abre uno
+     * nuevo. Sin cambio de costo no escribe nada, para no llenar el historial
+     * de filas idénticas cuando solo se cambió el proveedor preferido.
+     *
+     * Si el precio vigente nació en este mismo instante —crear y corregir
+     * dentro de la misma transacción— se corrige en el sitio en vez de
+     * cerrarlo: la tabla exige valid_until > valid_from y con dos escrituras
+     * simultáneas esa restricción reventaría.
+     */
+    private void registrarPrecio(ProductSupplier relation, BigDecimal costoAnterior) {
+        BigDecimal nuevo = relation.getUnitCost();
+        if (nuevo == null || nuevo.signum() <= 0) return;
+        if (costoAnterior != null && costoAnterior.compareTo(nuevo) == 0) return;
+
+        Instant ahora = Instant.now();
+        List<ProductSupplierPrice> vigentes = priceHistory
+                .findByCompanyIdAndProductSupplierIdAndValidUntilIsNull(
+                        relation.getCompanyId(), relation.getId());
+        for (ProductSupplierPrice vigente : vigentes) {
+            if (!vigente.getValidFrom().isBefore(ahora)) {
+                vigente.setUnitCost(nuevo);
+                priceHistory.update(vigente);
+                return;
+            }
+            vigente.setValidUntil(ahora);
+            priceHistory.update(vigente);
+        }
+        ProductSupplierPrice fila = new ProductSupplierPrice();
+        fila.setCompanyId(relation.getCompanyId());
+        fila.setProductSupplierId(relation.getId());
+        fila.setUnitCost(nuevo);
+        fila.setValidFrom(ahora);
+        priceHistory.save(fila);
     }
 
     private void desmarcarPreferidos(Long companyId, Long productId, Long exceptoId) {
@@ -271,6 +316,7 @@ public class ProductService {
                 .findByCompanyIdAndProductIdAndSupplierId(companyId, product.getId(), supplier.getId())
                 .orElseGet(ProductSupplier::new);
         boolean newRelation = relation.getId() == null;
+        BigDecimal costoAnterior = newRelation ? null : relation.getUnitCost();
         relation.setCompanyId(companyId);
         relation.setProductId(product.getId());
         relation.setSupplierId(supplier.getId());
@@ -279,6 +325,7 @@ public class ProductService {
             relation.setPreferred(existing.isEmpty());
         }
         productSuppliers.save(relation);
+        registrarPrecio(relation, costoAnterior);
         if (rawMaterial) {
             product.setCost(req.supplierCost());
         }
