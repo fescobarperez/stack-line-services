@@ -20,6 +20,7 @@ import com.erp_maya.partner.repository.ClientRepository;
 import com.erp_maya.project.domain.Project;
 import com.erp_maya.project.domain.ProjectCost;
 import com.erp_maya.project.domain.ProjectMaterial;
+import com.erp_maya.project.domain.ProjectQuote;
 import com.erp_maya.project.dto.ProjectDtos;
 import com.erp_maya.project.repository.ProjectMaterialRepositories.Materials;
 import com.erp_maya.project.repository.ProjectQuoteRepository;
@@ -279,7 +280,7 @@ public class ProjectService {
             // sino al liquidarlo. Cerrar con costo sin facturar es legítimo
             // (una garantía absorbida, un descuento pactado al final), pero es
             // plata gastada que no se le cobró a nadie: se exige decir por qué.
-            BigDecimal executed = totalExecuted(p);
+            BigDecimal executed = realExecutedCost(p);
             BigDecimal invoiced = totalInvoiced(p);
             if (invoiced.compareTo(executed) < 0
                     && (note == null || note.isBlank())) {
@@ -349,6 +350,29 @@ public class ProjectService {
                 .orElseThrow(() -> new ResourceNotFoundException("Proyecto " + id + " no encontrado"));
     }
 
+    /**
+     * Costo realmente incurrido: cargos del proyecto —que ya incluyen el
+     * material consumido a costo promedio— más los cargos de las cotizaciones
+     * aprobadas.
+     *
+     * Existe para que la guarda de cierre y el margen reportado midan lo mismo:
+     * antes la primera usaba solo project_costs y el segundo los materiales de
+     * las cotizaciones, así que el sistema exigía facturar un número que en
+     * pantalla nunca aparecía.
+     */
+    private BigDecimal realExecutedCost(Project p) {
+        BigDecimal approvedCharges = projectQuotes
+                .findByCompanyIdAndProjectId(p.getCompanyId(), p.getId()).stream()
+                .filter(link -> quotes.findByIdAndCompanyId(link.getQuoteId(), p.getCompanyId())
+                        .map(q -> approvedQuoteStatus(q.getStatus())).orElse(Boolean.FALSE))
+                .flatMap(link -> quoteChargeRepository
+                        .findByCompanyIdAndQuoteIdOrderBySortOrderAsc(p.getCompanyId(), link.getQuoteId())
+                        .stream())
+                .map(c -> c.getComputedAmount() == null ? BigDecimal.ZERO : c.getComputedAmount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return totalExecuted(p).add(approvedCharges);
+    }
+
     /** Costo incurrido: la suma de los cargos del proyecto. */
     private BigDecimal totalExecuted(Project p) {
         return costs.findByProjectIdOrderByCostDateDesc(p.getId()).stream()
@@ -381,8 +405,13 @@ public class ProjectService {
         //               parte de ninguna oferta comercial.
         BigDecimal materialsCostApproved = BigDecimal.ZERO;
         BigDecimal materialsCostTentative = BigDecimal.ZERO;
+        // Lo planificado que TODAVÍA no se ha consumido. Es lo único que puede
+        // sumarse al costo sin contarlo dos veces: lo ya consumido vive en
+        // project_costs a su costo real, no al del snapshot.
+        BigDecimal pendingMaterial = BigDecimal.ZERO;
         java.util.Map<Long, Boolean> quoteApproved = new java.util.HashMap<>();
         for (ProjectMaterial m : materialRows) {
+            pendingMaterial = pendingMaterial.add(pendingMaterialAmount(m));
             if (m.getQuoteId() == null) continue;
             boolean approved = quoteApproved.computeIfAbsent(m.getQuoteId(), qid ->
                     quotes.findByIdAndCompanyId(qid, p.getCompanyId())
@@ -392,19 +421,29 @@ public class ProjectService {
             if (approved) materialsCostApproved = materialsCostApproved.add(amt);
             else materialsCostTentative = materialsCostTentative.add(amt);
         }
-        // Gastos del proyecto = DERIVADOS de sus cotizaciones (modelo agregado):
-        //   materiales en cotización (materialsCostApproved + tentative) +
-        //   los cargos manuales (quote_charges) de esas cotizaciones.
-        // Ya no se usa project_cost como fuente de gastos.
-        BigDecimal materialsInQuotes = materialsCostApproved.add(materialsCostTentative);
-        BigDecimal quoteChargesTotal = projectQuotes
-                .findByCompanyIdAndProjectId(p.getCompanyId(), p.getId()).stream()
-                .flatMap(link -> quoteChargeRepository
-                        .findByCompanyIdAndQuoteIdOrderBySortOrderAsc(p.getCompanyId(), link.getQuoteId())
-                        .stream())
-                .map(c -> c.getComputedAmount() == null ? BigDecimal.ZERO : c.getComputedAmount())
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal executed = materialsInQuotes.add(quoteChargesTotal);
+        // Cargos de cotización, separados por si la cotización está aprobada.
+        // Los de un borrador no son costo firme: su ingreso tampoco cuenta en
+        // `contracted`, y cargar el costo sin el ingreso hunde el margen de un
+        // proyecto que solo tiene una propuesta sobre la mesa.
+        BigDecimal approvedCharges = BigDecimal.ZERO;
+        BigDecimal tentativeCharges = BigDecimal.ZERO;
+        for (ProjectQuote link : projectQuotes.findByCompanyIdAndProjectId(p.getCompanyId(), p.getId())) {
+            BigDecimal amt = quoteChargeRepository
+                    .findByCompanyIdAndQuoteIdOrderBySortOrderAsc(p.getCompanyId(), link.getQuoteId())
+                    .stream()
+                    .map(c -> c.getComputedAmount() == null ? BigDecimal.ZERO : c.getComputedAmount())
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            boolean approved = quoteApproved.computeIfAbsent(link.getQuoteId(), qid ->
+                    quotes.findByIdAndCompanyId(qid, p.getCompanyId())
+                            .map(q -> approvedQuoteStatus(q.getStatus()))
+                            .orElse(Boolean.FALSE));
+            if (approved) approvedCharges = approvedCharges.add(amt);
+            else tentativeCharges = tentativeCharges.add(amt);
+        }
+        // Ejecutado = lo REALMENTE gastado: los cargos del proyecto —que
+        // incluyen el material ya consumido a costo promedio— más los cargos de
+        // las cotizaciones aprobadas. Lo planificado va al margen proyectado.
+        BigDecimal executed = totalExecuted(p).add(approvedCharges);
         // Comprometido: órdenes del proyecto que todavía no tienen factura.
         // No se suma al ejecutado —una OC puede cancelarse— pero descontarlo del
         // margen proyectado es lo que permite ver venir un sobrecosto.
@@ -442,7 +481,13 @@ public class ProjectService {
                 ? quotesContracted
                 : (p.getContractedAmount() != null ? p.getContractedAmount() : BigDecimal.ZERO);
         BigDecimal margin = contracted.subtract(executed);
-        BigDecimal projected = margin.subtract(committed);
+        // Proyectado: lo que quedaría si todo lo planificado se ejecuta y las
+        // propuestas vivas se aprueban. Es el número que deja ver venir un
+        // sobrecosto antes de que ocurra.
+        BigDecimal projected = margin
+                .subtract(pendingMaterial)
+                .subtract(tentativeCharges)
+                .subtract(committed);
         BigDecimal marginPct = contracted.signum() == 0 ? BigDecimal.ZERO
                 : margin.multiply(new BigDecimal("100")).divide(contracted, 2, RoundingMode.HALF_UP);
 
@@ -522,6 +567,18 @@ public class ProjectService {
         if (status == null) return false;
         String s = status.trim().toLowerCase();
         return s.equals("aprobada") || s.equals("convertida");
+    }
+
+    /** Lo planificado que aún no sale de bodega: (planificado − consumido) × costo. */
+    private BigDecimal pendingMaterialAmount(ProjectMaterial material) {
+        BigDecimal planned = material.getQuantityPlanned() == null
+                ? BigDecimal.ZERO : material.getQuantityPlanned();
+        BigDecimal consumed = material.getQuantityConsumed() == null
+                ? BigDecimal.ZERO : material.getQuantityConsumed();
+        BigDecimal pending = planned.subtract(consumed).max(BigDecimal.ZERO);
+        BigDecimal unitCost = material.getUnitCostSnapshot() == null
+                ? BigDecimal.ZERO : material.getUnitCostSnapshot();
+        return unitCost.multiply(pending).setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal plannedMaterialAmount(ProjectMaterial material) {

@@ -27,6 +27,36 @@ public final class ReportsDtos {
     @Serdeable
     public record SalesBookRow(LocalDate date, long tickets, BigDecimal taxable, BigDecimal iva, BigDecimal total) {}
 
+    /**
+     * Un proyecto en el ranking de rentabilidad.
+     *
+     * `margin` es el firme —contratado menos lo realmente ejecutado— y
+     * `projectedMargin` descuenta además el material pendiente, los cargos de
+     * cotizaciones no aprobadas y las órdenes de compra vivas. En un proyecto
+     * cerrado los dos coinciden; en uno abierto la diferencia es justo lo que
+     * falta por gastar.
+     */
+    @Serdeable
+    public record ProjectMarginRow(Long projectId, String code, String name,
+                                   String clientName, String status,
+                                   BigDecimal contracted, BigDecimal executed,
+                                   BigDecimal margin, BigDecimal marginPct,
+                                   BigDecimal projectedMargin,
+                                   LocalDate startDate, LocalDate endDate) {}
+
+    /**
+     * Top K de proyectos por rentabilidad, en las dos direcciones.
+     *
+     * `evaluated` es cuántos proyectos entraron al ranking tras el filtro de
+     * estado: sin ese dato, un top de dos filas parece un error de la consulta
+     * en vez de que solo haya dos proyectos que cumplan.
+     */
+    @Serdeable
+    public record ProjectProfitability(String orderBy, String statusFilter, int evaluated,
+                                       BigDecimal totalMargin, BigDecimal avgMarginPct,
+                                       List<ProjectMarginRow> best,
+                                       List<ProjectMarginRow> worst) {}
+
     @Serdeable
     public record SalesReport(BigDecimal totalSales, long totalTickets, BigDecimal avgTicket,
                               List<TrendPoint> trend, List<BranchRow> byBranch, List<PaymentRow> byPayment,
