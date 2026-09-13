@@ -3,6 +3,7 @@ package com.erp_maya.project.controller;
 import com.erp_maya.project.dto.ProjectDtos;
 import com.erp_maya.project.dto.ProjectMaterialDtos;
 import com.erp_maya.project.dto.ProjectQuoteBuilderDtos;
+import com.erp_maya.project.service.ProjectDuplicationService;
 import com.erp_maya.project.service.ProjectMaterialService;
 import com.erp_maya.project.service.ProjectQuoteBuilderService;
 import com.erp_maya.project.service.ProjectService;
@@ -21,12 +22,15 @@ public class ProjectController {
     private final ProjectService service;
     private final ProjectMaterialService materialService;
     private final ProjectQuoteBuilderService quoteBuilder;
+    private final ProjectDuplicationService duplication;
 
     public ProjectController(ProjectService service, ProjectMaterialService materialService,
-                             ProjectQuoteBuilderService quoteBuilder) {
+                             ProjectQuoteBuilderService quoteBuilder,
+                             ProjectDuplicationService duplication) {
         this.service = service;
         this.materialService = materialService;
         this.quoteBuilder = quoteBuilder;
+        this.duplication = duplication;
     }
 
     /**
@@ -115,6 +119,16 @@ public class ProjectController {
     @Status(HttpStatus.CREATED)
     public ProjectDtos.Response create(@Valid @Body ProjectDtos.Request request) {
         return service.create(request);
+    }
+
+    /**
+     * Duplica el proyecto con su plan de materiales. Devuelve el proyecto nuevo,
+     * que nace en borrador y con todos los materiales de vuelta en el pool.
+     */
+    @Post("/{id}/duplicate")
+    @Status(HttpStatus.CREATED)
+    public ProjectDtos.Response duplicate(Long id, @Valid @Body ProjectDtos.DuplicateRequest request) {
+        return service.get(duplication.duplicate(id, request));
     }
 
     @Post("/{id}/costs")

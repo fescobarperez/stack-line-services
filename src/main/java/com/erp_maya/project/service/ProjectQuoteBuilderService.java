@@ -17,6 +17,7 @@ import com.erp_maya.quote.domain.QuoteHistory;
 import com.erp_maya.quote.domain.QuoteItem;
 import com.erp_maya.quote.repository.QuoteHistoryRepository;
 import com.erp_maya.quote.repository.QuoteRepository;
+import com.erp_maya.sequence.service.DocumentSequenceService;
 import com.erp_maya.settings.service.TaxService;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
@@ -49,10 +50,14 @@ public class ProjectQuoteBuilderService {
     private final TaxService taxService;
     private final TenantContext tenant;
 
+    private final DocumentSequenceService sequences;
+
     public ProjectQuoteBuilderService(Projects projects, Materials materials, Groups groups,
                                       QuoteRepository quotes, QuoteHistoryRepository quoteHistory,
                                       ProjectQuoteRepository projectQuotes, ClientRepository clients,
-                                      TaxService taxService, TenantContext tenant) {
+                                      TaxService taxService, TenantContext tenant,
+                                      DocumentSequenceService sequences) {
+        this.sequences = sequences;
         this.projects = projects;
         this.materials = materials;
         this.groups = groups;
@@ -79,7 +84,7 @@ public class ProjectQuoteBuilderService {
         Quote quote = new Quote();
         quote.setCompanyId(companyId);
         quote.setPartyType("client");
-        quote.setDocNumber("COT-" + Instant.now().toEpochMilli());
+        quote.setDocNumber(sequences.next("COT", "A"));
         LocalDate quoteDate = req.quoteDate() != null ? req.quoteDate() : LocalDate.now();
         if (req.validUntil() == null) {
             throw new IllegalStateException("Una cotización a cliente necesita fecha de expiración");

@@ -15,6 +15,14 @@ public class ProjectDtos {
                           Long costCenterId, BigDecimal contractedAmount, String currency,
                           LocalDate startDate, LocalDate endDate, String notes, String status) {}
 
+    /**
+     * Duplicar un proyecto como plantilla. Nombre y cliente son lo único que se
+     * captura: el resto —centro de costo, monto, moneda, fechas y notas— se
+     * hereda del original.
+     */
+    @Serdeable
+    public record DuplicateRequest(@NotBlank String name, @NotNull Long clientId) {}
+
     /** Conversión desde cotización: el monto sale de la propia cotización. */
     @Serdeable
     public record FromQuoteRequest(String name, String code, Long costCenterId,

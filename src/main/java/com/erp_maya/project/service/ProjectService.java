@@ -2,6 +2,7 @@ package com.erp_maya.project.service;
 
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.sequence.service.DocumentSequenceService;
 import com.erp_maya.accounting.service.PostingService;
 import com.erp_maya.authorization.dto.AuthorizationDtos;
 import com.erp_maya.authorization.service.AuthorizationService;
@@ -78,6 +79,8 @@ public class ProjectService {
     private final PostingService posting;
     private final TenantContext tenant;
 
+    private final DocumentSequenceService sequences;
+
     public ProjectService(Projects projects, Costs costs, Materials projectMaterials, QuoteRepository quotes,
                           ProjectQuoteRepository projectQuotes,
                           QuoteChargeRepository quoteChargeRepository,
@@ -89,7 +92,9 @@ public class ProjectService {
                           ProductStockRepository stock, StockService stockService,
                           UserRepository users, AuthorizationService authorizations,
                           PostingService posting,
+                          DocumentSequenceService sequences,
                           TenantContext tenant) {
+        this.sequences = sequences;
         this.projects = projects;
         this.costs = costs;
         this.projectMaterials = projectMaterials;
@@ -328,8 +333,15 @@ public class ProjectService {
                 .orElseThrow(() -> new ResourceNotFoundException("Cliente " + clientId + " no encontrado"));
     }
 
+    /**
+     * Correlativo del proyecto.
+     *
+     * Antes era COUNT(*)+1, que repite código en cuanto se borra un proyecto y
+     * choca contra uq_projects_code. La secuencia no cuenta filas: entrega el
+     * siguiente y lo consume bajo FOR UPDATE.
+     */
     private String nextCode(Long companyId) {
-        return String.format("PRY-%04d", projects.countByCompanyId(companyId) + 1);
+        return sequences.next("PRY", "A");
     }
 
     private Project find(Long id) {

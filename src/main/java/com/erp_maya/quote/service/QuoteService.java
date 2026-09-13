@@ -4,6 +4,7 @@ import com.erp_maya.catalog.domain.Product;
 import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.sequence.service.DocumentSequenceService;
 import com.erp_maya.settings.service.TaxService;
 import com.erp_maya.partner.domain.Client;
 import com.erp_maya.partner.repository.ClientRepository;
@@ -46,10 +47,14 @@ public class QuoteService {
     private final QuotePlanService paymentPlans;
     private final TenantContext tenant;
 
+    private final DocumentSequenceService sequences;
+
     public QuoteService(QuoteRepository quotes, QuoteHistoryRepository history, ProductRepository products,
                         ClientRepository clients, Projects projects, ProjectQuoteRepository projectQuotes,
                         Materials projectMaterials, TenantContext tenant, TaxService taxService,
-                        QuoteChargeService quoteCharges, QuotePlanService paymentPlans) {
+                        QuoteChargeService quoteCharges, QuotePlanService paymentPlans,
+                        DocumentSequenceService sequences) {
+        this.sequences = sequences;
         this.quotes = quotes;
         this.history = history;
         this.products = products;
@@ -93,7 +98,7 @@ public class QuoteService {
         quote.setCompanyId(companyId);
         quote.setPartyType(partyType);
         quote.setDocNumber(req.docNumber() != null && !req.docNumber().isBlank()
-                ? req.docNumber() : (rfq ? "RFQ-" : "COT-") + Instant.now().toEpochMilli());
+                ? req.docNumber() : sequences.next(rfq ? "RFQ" : "COT", "A"));
         quote.setClientName(req.clientName());
         quote.setClientNit(req.clientNit());
         quote.setClientEmail(req.clientEmail());
@@ -336,7 +341,7 @@ public class QuoteService {
                     Project project = new Project();
                     project.setCompanyId(companyId);
                     project.setClientId(client.getId());
-                    project.setCode("PRY-AUTO-" + (projects.countByCompanyId(companyId) + 1));
+                    project.setCode(sequences.next("PRY", "A"));
                     project.setName("Proyecto general");
                     project.setCurrency("GTQ");
                     project.setStatus("draft");

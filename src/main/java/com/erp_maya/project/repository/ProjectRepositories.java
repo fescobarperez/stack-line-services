@@ -17,7 +17,6 @@ public class ProjectRepositories {
         Optional<Project> findByCompanyIdAndQuoteId(Long companyId, Long quoteId);
         Optional<Project> findByCompanyIdAndClientIdAndName(Long companyId, Long clientId, String name);
         Optional<Project> findByCompanyIdAndCode(Long companyId, String code);
-        long countByCompanyId(Long companyId);
     }
 
     @Repository
