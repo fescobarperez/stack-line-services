@@ -33,6 +33,17 @@ dependencies {
     annotationProcessor("io.micronaut.security:micronaut-security-annotations")
     implementation("io.micronaut.security:micronaut-security-jwt")
     implementation("at.favre.lib:bcrypt:0.10.2")
+
+    // Correo saliente. Jakarta Mail directo y no micronaut-email: ese arma la
+    // sesión desde application.properties, y aquí el servidor SMTP es de cada
+    // empresa y se resuelve en tiempo de ejecución.
+    implementation("org.eclipse.angus:angus-mail:2.0.3")
+
+    // PDF del lado del servidor. openhtmltopdf y no una librería de layout
+    // programático porque la plantilla ya existe en HTML/CSS para el PDF del
+    // navegador: mantener una sola forma de maquetarlo es más barato que
+    // reescribir el diseño en código Java.
+    implementation("io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.22")
     compileOnly("io.micronaut:micronaut-http-client")
     // AWS SDK v2 — S3 + presigner para subidas directas del navegador (logos de empresa).
     // Credenciales por la cadena por defecto (IAM Role en EC2/ECS/Lambda; perfil en local).

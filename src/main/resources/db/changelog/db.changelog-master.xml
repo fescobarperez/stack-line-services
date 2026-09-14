@@ -98,5 +98,6 @@
     <include file="changes/066_operating_expense_mode.sql" relativeToChangelogFile="true"/>
     <include file="changes/067_quote_manual_adjustment.sql" relativeToChangelogFile="true"/>
     <include file="changes/068_operating_expense_pct.sql" relativeToChangelogFile="true"/>
+    <include file="changes/069_company_mail_settings.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

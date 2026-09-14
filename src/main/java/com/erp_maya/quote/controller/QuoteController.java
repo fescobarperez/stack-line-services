@@ -6,6 +6,9 @@ import com.erp_maya.quote.dto.QuoteChargeDtos;
 import java.util.List;
 import com.erp_maya.quote.dto.QuotePlanDtos;
 import com.erp_maya.quote.service.QuoteService;
+import com.erp_maya.mail.dto.MailSettingsDtos;
+import com.erp_maya.mail.service.MailService;
+import com.erp_maya.mail.service.QuoteMailService;
 import com.erp_maya.quote.service.QuoteChargeService;
 import com.erp_maya.quote.service.QuotePlanService;
 import io.micronaut.core.annotation.Nullable;
@@ -28,8 +31,11 @@ public class QuoteController {
     private final QuoteService service;
     private final QuoteChargeService charges;
     private final QuotePlanService plan;
+    private final QuoteMailService quoteMail;
 
-    public QuoteController(QuoteService service, QuoteChargeService charges, QuotePlanService plan) {
+    public QuoteController(QuoteService service, QuoteChargeService charges, QuotePlanService plan,
+                           QuoteMailService quoteMail) {
+        this.quoteMail = quoteMail;
         this.service = service;
         this.charges = charges;
         this.plan = plan;
@@ -56,9 +62,28 @@ public class QuoteController {
         return service.update(id, request);
     }
 
+    /**
+     * Al pasar a «enviada» se manda la cotización al cliente.
+     *
+     * El correo va DESPUÉS de que el cambio de estado esté guardado, y aquí y
+     * no dentro del servicio para no sostener la transacción durante los
+     * segundos que puede tardar un SMTP. Si el envío falla, el estado ya
+     * cambió: el fallo queda en la bitácora de la cotización, no deshace nada.
+     */
     @Put("/{id}/status")
     public QuoteDtos.Response updateStatus(Long id, @Valid @Body QuoteDtos.StatusRequest request) {
-        return service.updateStatus(id, request);
+        QuoteDtos.Response saved = service.updateStatus(id, request);
+        if ("enviada".equalsIgnoreCase(saved.status())) {
+            quoteMail.enviar(id);
+        }
+        return saved;
+    }
+
+    /** Reenvío manual, para cuando el cliente dice que no le llegó. */
+    @Post("/{id}/send-email")
+    public MailSettingsDtos.TestResult sendEmail(Long id) {
+        MailService.Resultado r = quoteMail.enviar(id);
+        return new MailSettingsDtos.TestResult(r.ok(), r.mensaje());
     }
 
     // ── Gastos / cargos de la cotización ──────────────────────────────────
