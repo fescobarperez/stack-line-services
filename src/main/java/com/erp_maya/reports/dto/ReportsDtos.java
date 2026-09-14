@@ -44,6 +44,18 @@ public final class ReportsDtos {
                                    BigDecimal projectedMargin,
                                    LocalDate startDate, LocalDate endDate) {}
 
+    /** Una porción de la composición del gasto agregada. */
+    @Serdeable
+    public record CompositionSlice(String label, BigDecimal amount) {}
+
+    /** Cuántos proyectos caen en cada tramo del coeficiente de variación. */
+    @Serdeable
+    public record MarginBucket(String label, int count) {}
+
+    /** Cobrado y gastado ACUMULADOS a esa fecha, sumando todos los proyectos. */
+    @Serdeable
+    public record CashflowPoint(LocalDate date, BigDecimal collected, BigDecimal spent) {}
+
     /**
      * Top K de proyectos por rentabilidad, en las dos direcciones.
      *
@@ -55,7 +67,10 @@ public final class ReportsDtos {
     public record ProjectProfitability(String orderBy, String statusFilter, int evaluated,
                                        BigDecimal totalMargin, BigDecimal avgMarginPct,
                                        List<ProjectMarginRow> best,
-                                       List<ProjectMarginRow> worst) {}
+                                       List<ProjectMarginRow> worst,
+                                       List<CompositionSlice> composition,
+                                       List<MarginBucket> distribution,
+                                       List<CashflowPoint> cashflow) {}
 
     @Serdeable
     public record SalesReport(BigDecimal totalSales, long totalTickets, BigDecimal avgTicket,

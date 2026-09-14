@@ -490,6 +490,8 @@ public class ProjectService {
                 .subtract(committed);
         BigDecimal marginPct = contracted.signum() == 0 ? BigDecimal.ZERO
                 : margin.multiply(new BigDecimal("100")).divide(contracted, 2, RoundingMode.HALF_UP);
+        BigDecimal projectedMarginPct = contracted.signum() == 0 ? BigDecimal.ZERO
+                : projected.multiply(new BigDecimal("100")).divide(contracted, 2, RoundingMode.HALF_UP);
 
         String clientName = clients.findByIdAndCompanyId(p.getClientId(), p.getCompanyId())
                 .map(Client::getName).orElse(null);
@@ -538,6 +540,7 @@ public class ProjectService {
                 p.getCostCenterId(), p.getCurrency(), p.getStatus(),
                 p.getStartDate(), p.getEndDate(), p.getNotes(),
                 contracted, executed, committed, invoiced, collected, margin, projected, marginPct,
+                projectedMarginPct,
                 contracted.subtract(invoiced),
                 contracted.subtract(collected),
                 // Nunca negativo: facturar de más no es "costo sin facturar",

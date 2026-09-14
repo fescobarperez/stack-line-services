@@ -84,6 +84,14 @@ public class ProjectDtos {
                            BigDecimal margin,
                            BigDecimal projectedMargin,
                            BigDecimal marginPct,
+                           /**
+                            * El mismo margen contra el ejecutado PROYECTADO. La
+                            * tarjeta de variación muestra los dos: sobre el real,
+                            * un proyecto que apenas arranca da casi 1.0 porque
+                            * todavía no ha gastado, y se ve mejor de lo que va a
+                            * terminar.
+                            */
+                           BigDecimal projectedMarginPct,
                            BigDecimal pendingToInvoice,
                            BigDecimal pendingToCollect,
                            /** Costo ya incurrido que todavía no se le facturó a nadie. */
