@@ -78,9 +78,17 @@ public class Quote {
     @Column(name = "project_id")
     private Long projectId;
 
-    /** 'single' = un monto; 'detailed' = partidas separadas. */
+    /** Ajuste de cierre sobre la base antes de IVA. Negativo = descuento. */
+    @Column(name = "manual_adjustment", nullable = false)
+    private BigDecimal manualAdjustment = BigDecimal.ZERO;
+
+    /** 'single' = un monto; 'detailed' = partidas; 'percent' = % del subtotal. */
     @Column(name = "operating_expense_mode", nullable = false)
     private String operatingExpenseMode = "single";
+
+    /** Porcentaje sobre el subtotal cuando el modo es 'percent'. */
+    @Column(name = "operating_expense_pct", nullable = false)
+    private BigDecimal operatingExpensePct = BigDecimal.ZERO;
 
     private String notes;
 
@@ -181,6 +189,10 @@ public class Quote {
 
     public Long getProjectId() { return projectId; }
     public void setProjectId(Long projectId) { this.projectId = projectId; }
+    public BigDecimal getManualAdjustment() { return manualAdjustment; }
+    public void setManualAdjustment(BigDecimal manualAdjustment) { this.manualAdjustment = manualAdjustment; }
+    public BigDecimal getOperatingExpensePct() { return operatingExpensePct; }
+    public void setOperatingExpensePct(BigDecimal operatingExpensePct) { this.operatingExpensePct = operatingExpensePct; }
     public String getOperatingExpenseMode() { return operatingExpenseMode; }
     public void setOperatingExpenseMode(String operatingExpenseMode) { this.operatingExpenseMode = operatingExpenseMode; }
 

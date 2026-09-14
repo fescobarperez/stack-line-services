@@ -88,11 +88,25 @@ public class QuoteController {
         return charges.listCategories();
     }
 
+    /** Ajuste de cierre sobre la base antes de IVA. Negativo = descuento. */
+    @Put("/{id}/adjustment")
+    public QuoteChargeDtos.Summary setAdjustment(
+            Long id, @Valid @Body QuoteChargeDtos.AdjustmentRequest request) {
+        return charges.setAdjustment(id, request.amount());
+    }
+
     /** Cambia entre monto único y desglose para el gasto operativo. */
     @Put("/{id}/operating-mode")
     public QuoteChargeDtos.Summary setOperatingMode(
             Long id, @Valid @Body QuoteChargeDtos.OperatingModeRequest request) {
         return charges.setOperatingMode(id, request.mode());
+    }
+
+    /** Porcentaje de gasto operativo sobre el subtotal; cambia al modo 'percent'. */
+    @Put("/{id}/operating-pct")
+    public QuoteChargeDtos.Summary setOperatingPct(
+            Long id, @Valid @Body QuoteChargeDtos.OperatingPctRequest request) {
+        return charges.setOperatingPct(id, request.pct());
     }
 
     /** Fija el gasto operativo como una sola cifra; cero lo elimina. */

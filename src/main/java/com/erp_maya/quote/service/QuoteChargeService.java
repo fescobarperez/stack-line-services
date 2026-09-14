@@ -101,8 +101,8 @@ public class QuoteChargeService {
         var quote = quotes.findByIdAndCompanyId(quoteId, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
         String modo = mode == null ? "" : mode.trim().toLowerCase();
-        if (!modo.equals("single") && !modo.equals("detailed")) {
-            throw new IllegalStateException("El modo debe ser 'single' o 'detailed'.");
+        if (!modo.equals("single") && !modo.equals("detailed") && !modo.equals("percent")) {
+            throw new IllegalStateException("El modo debe ser 'single', 'detailed' o 'percent'.");
         }
         if (modo.equals("single")) {
             long partidas = operatingCharges(companyId, quoteId).size();
@@ -112,6 +112,27 @@ public class QuoteChargeService {
             }
         }
         quote.setOperatingExpenseMode(modo);
+        quotes.update(quote);
+        return recompute(quoteId, companyId);
+    }
+
+    /**
+     * Fija el porcentaje de gasto operativo sobre el subtotal.
+     *
+     * Cambia también al modo 'percent': indicar un porcentaje y que la cifra
+     * siga saliendo de las partidas capturadas sería un botón que no hace nada.
+     */
+    @Transactional
+    public QuoteChargeDtos.Summary setOperatingPct(Long quoteId, BigDecimal pct) {
+        Long companyId = tenant.getCompanyId();
+        Quote quote = quotes.findByIdAndCompanyId(quoteId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
+        BigDecimal valor = money(pct);
+        if (valor.signum() < 0 || valor.compareTo(new BigDecimal("100")) > 0) {
+            throw new IllegalStateException("El porcentaje de gasto operativo debe estar entre 0 y 100.");
+        }
+        quote.setOperatingExpensePct(valor);
+        quote.setOperatingExpenseMode("percent");
         quotes.update(quote);
         return recompute(quoteId, companyId);
     }
@@ -174,6 +195,23 @@ public class QuoteChargeService {
                 .orElseThrow(() -> new IllegalStateException(
                         "No hay ningún concepto marcado como gasto operativo. "
                         + "Crea uno en Mantenimientos → Cotizaciones → Conceptos de gasto."));
+    }
+
+    /**
+     * Fija el ajuste de cierre. Cero lo quita.
+     *
+     * No valida el estado de la cotización por la misma razón que addCharge
+     * tampoco lo hace: el permiso de edición lo decide la pantalla, y meter
+     * aquí una regla distinta dejaría dos criterios peleando.
+     */
+    @Transactional
+    public QuoteChargeDtos.Summary setAdjustment(Long quoteId, BigDecimal amount) {
+        Long companyId = tenant.getCompanyId();
+        Quote quote = quotes.findByIdAndCompanyId(quoteId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
+        quote.setManualAdjustment(money(amount));
+        quotes.update(quote);
+        return recompute(quoteId, companyId);
     }
 
     /** Catálogo activo, para el selector del cargo y el mantenimiento. */
@@ -285,66 +323,77 @@ public class QuoteChargeService {
     private QuoteChargeDtos.Summary recompute(Long quoteId, Long companyId) {
         var quote = quotes.findByIdAndCompanyId(quoteId, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
-        BigDecimal materialsCost = materials.findByCompanyIdAndQuoteId(companyId, quoteId).stream()
+        // SUBTOTAL = Σ(cantidad × precio_unitario). La cotización es un
+        // documento de PRECIO: su total se construye desde lo que se le cobra
+        // al cliente, no desde lo que cuesta. El costo sigue vivo en
+        // materialsCost, que se informa aparte y alimenta el margen del
+        // proyecto —ahí sí se compara precio contra costo.
+        BigDecimal subtotal = money(quote.getItems().stream()
+                .map(i -> i.getLineTotal() == null ? BigDecimal.ZERO : i.getLineTotal())
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+        BigDecimal materialsCost = money(materials.findByCompanyIdAndQuoteId(companyId, quoteId).stream()
                 .map(this::materialAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        // Cotizaciones antiguas o no ligadas a proyecto usan sus líneas como
-        // base operativa para no quedar con un total Q0 al recalcular.
-        if (materialsCost.signum() == 0) {
-            materialsCost = quote.getItems().stream()
-                    .map(i -> i.getLineTotal() == null ? BigDecimal.ZERO : i.getLineTotal())
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-        }
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
 
         List<QuoteCharge> rows = charges.findByCompanyIdAndQuoteIdOrderBySortOrderAsc(companyId, quoteId);
         Map<Long, ChargeCategory> catalogo = categories.findByCompanyIdOrderBySortOrderAsc(companyId)
                 .stream().collect(Collectors.toMap(ChargeCategory::getId, Function.identity()));
+        // Todo cargo se valúa contra el SUBTOTAL, sea fijo o porcentual.
         BigDecimal fixedTotal = BigDecimal.ZERO;
-        for (QuoteCharge c : rows) {
-            if ("fixed".equals(c.getCalcType())) {
-                BigDecimal amt = money(c.getValue());
-                c.setComputedAmount(amt);
-                fixedTotal = fixedTotal.add(amt);
-            }
-        }
-        BigDecimal subtotalCost = money(materialsCost.add(fixedTotal));
         BigDecimal percentTotal = BigDecimal.ZERO;
         for (QuoteCharge c : rows) {
-            if ("percent".equals(c.getCalcType())) {
-                BigDecimal amt = money(subtotalCost.multiply(c.getValue())
-                        .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
-                c.setComputedAmount(amt);
-                percentTotal = percentTotal.add(amt);
-            }
+            BigDecimal amt = "percent".equals(c.getCalcType())
+                    ? money(subtotal.multiply(money(c.getValue())).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
+                    : money(c.getValue());
+            c.setComputedAmount(amt);
+            if ("percent".equals(c.getCalcType())) percentTotal = percentTotal.add(amt);
+            else fixedTotal = fixedTotal.add(amt);
         }
         rows.forEach(charges::update);
 
-        // Los gastos operativos son un CORTE de los cargos, no un escalón nuevo
-        // del cálculo: sus fixed ya entraron en subtotalCost y sus percent en
-        // percentTotal, sobre la misma base que el resto. Sumarlos aquí otra
-        // vez duplicaría el gasto; esto solo los totaliza para mostrarlos.
-        BigDecimal operatingExpenses = rows.stream()
+        // Gasto operativo: en modo 'percent' sale del porcentaje configurado y
+        // los cargos operativos capturados no cuentan —serían el mismo gasto
+        // dos veces—; en 'single' y 'detailed' es la suma de esas partidas.
+        boolean porPorcentaje = "percent".equalsIgnoreCase(quote.getOperatingExpenseMode());
+        BigDecimal capturados = rows.stream()
                 .filter(c -> esOperativo(c, catalogo))
                 .map(c -> c.getComputedAmount() == null ? BigDecimal.ZERO : c.getComputedAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal operatingExpenses = porPorcentaje
+                ? money(subtotal.multiply(money(quote.getOperatingExpensePct()))
+                        .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
+                : capturados;
 
-        BigDecimal operatingCost = money(subtotalCost.add(percentTotal));
+        // Los cargos que NO son operativos no caben en la fórmula del negocio,
+        // pero desaparecerlos cambiaría el total en silencio: van en su propio
+        // renglón, antes de la ganancia.
+        BigDecimal otherCharges = money(fixedTotal.add(percentTotal).subtract(capturados));
+        BigDecimal subtotalCost = money(subtotal.add(operatingExpenses));
+        BigDecimal operatingCost = money(subtotalCost.add(otherCharges));
         String profitCalcType = "percent".equals(quote.getProfitCalcType()) ? "percent" : "fixed";
         BigDecimal profitValue = money(quote.getProfitValue());
         BigDecimal profitAmount = "percent".equals(profitCalcType)
                 ? money(operatingCost.multiply(profitValue).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
                 : profitValue;
         BigDecimal taxableSubtotal = money(operatingCost.add(profitAmount));
+        // El ajuste de cierre entra ANTES del IVA: el impuesto se calcula sobre
+        // lo que de verdad se le cobra al cliente. Y la base no baja de cero
+        // aunque el descuento sea mayor que el total, porque un IVA negativo no
+        // existe y el error se propagaría a la factura.
+        BigDecimal manualAdjustment = money(quote.getManualAdjustment());
+        BigDecimal adjustedBase = money(taxableSubtotal.add(manualAdjustment)).max(BigDecimal.ZERO);
         BigDecimal taxRate = rateFor(quote);
-        BigDecimal tax = money(taxableSubtotal.multiply(taxRate)
+        BigDecimal tax = money(adjustedBase.multiply(taxRate)
                 .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
-        BigDecimal total = money(taxableSubtotal.add(tax));
+        BigDecimal total = money(adjustedBase.add(tax));
 
         quote.setProfitCalcType(profitCalcType);
         quote.setProfitValue(profitValue);
         quote.setProfitAmount(profitAmount);
         quote.setTaxRate(taxRate);
-        quote.setSubtotal(taxableSubtotal);
+        // El subtotal persistido es la base sobre la que se calculó el IVA:
+        // con ajuste, esa es la ajustada, no la previa.
+        quote.setSubtotal(adjustedBase);
         quote.setTax(tax);
         quote.setTotal(total);
         quotes.update(quote);
@@ -361,8 +410,10 @@ public class QuoteChargeService {
                 .toList();
         return new QuoteChargeDtos.Summary(money(materialsCost), money(fixedTotal),
                 money(operatingExpenses), quote.getOperatingExpenseMode(),
+                money(quote.getOperatingExpensePct()), money(subtotal), money(otherCharges),
                 subtotalCost, money(percentTotal), operatingCost, profitCalcType, profitValue,
-                profitAmount, taxableSubtotal, taxRate, tax, total, out);
+                profitAmount, taxableSubtotal, manualAdjustment, adjustedBase,
+                taxRate, tax, total, out);
     }
 
     private boolean esOperativo(QuoteCharge c, Map<Long, ChargeCategory> catalogo) {

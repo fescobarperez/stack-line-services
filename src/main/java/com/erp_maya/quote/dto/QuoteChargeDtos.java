@@ -26,9 +26,17 @@ public final class QuoteChargeDtos {
                                  String description, String calcType, BigDecimal value,
                                  BigDecimal computedAmount, Integer sortOrder) {}
 
+    /** Ajuste de cierre sobre la base antes de IVA. Negativo = descuento. */
+    @Serdeable
+    public record AdjustmentRequest(@NotNull BigDecimal amount) {}
+
     /** Cambio de modo de captura del gasto operativo: 'single' | 'detailed'. */
     @Serdeable
     public record OperatingModeRequest(@NotBlank String mode) {}
+
+    /** Porcentaje de gasto operativo sobre el subtotal (modo 'percent'). */
+    @Serdeable
+    public record OperatingPctRequest(@NotNull BigDecimal pct) {}
 
     /** Monto del gasto operativo cuando se captura como cifra única. */
     @Serdeable
@@ -52,22 +60,28 @@ public final class QuoteChargeDtos {
 
     /**
      * Resumen calculado de la cotización:
-     *   materialsCost   Σ costo de materiales de las líneas (derivado, no persistido)
+     *   subtotal        Σ(cantidad × precio_unitario) · la BASE de todo
+     *   materialsCost   costo de los materiales (informativo: no entra al total)
      *   fixedTotal      Σ cargos fixed
-     *   subtotalCost    materialsCost + fixedTotal (base de los percent)
-     *   operatingExpenses Σ cargos cuya categoría es de gastos operativos
-     *   operatingCost   subtotalCost + percentTotal
+     *   operatingExpenses  gasto operativo: por porcentaje o por partidas
+     *   otherCharges    cargos que no son de categoría operativa
+     *   subtotalCost    subtotal + operatingExpenses
+     *   operatingCost   subtotalCost + otherCharges · base de la ganancia
      *   profitAmount    ganancia fija o porcentaje sobre operatingCost
-     *   taxableSubtotal operatingCost + profitAmount
-     *   tax             taxableSubtotal × tasa
-     *   total           taxableSubtotal + tax
+     *   taxableSubtotal operatingCost + profitAmount  (base ANTES del ajuste)
+     *   adjustedBase    max(0, taxableSubtotal + manualAdjustment)
+     *   tax             adjustedBase × tasa
+     *   total           adjustedBase + tax
      */
     @Serdeable
     public record Summary(BigDecimal materialsCost, BigDecimal fixedTotal,
                           BigDecimal operatingExpenses, String operatingExpenseMode,
+                          BigDecimal operatingExpensePct, BigDecimal subtotal,
+                          BigDecimal otherCharges,
                           BigDecimal subtotalCost, BigDecimal percentTotal,
                           BigDecimal operatingCost, String profitCalcType, BigDecimal profitValue,
                           BigDecimal profitAmount, BigDecimal taxableSubtotal,
+                          BigDecimal manualAdjustment, BigDecimal adjustedBase,
                           BigDecimal taxRate, BigDecimal tax, BigDecimal total,
                           List<ChargeResponse> charges) {}
 }
