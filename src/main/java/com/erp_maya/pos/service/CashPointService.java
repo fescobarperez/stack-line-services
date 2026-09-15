@@ -70,13 +70,27 @@ public class CashPointService {
         return toResponse(points.update(p));
     }
 
-    /** No se borra una caja ocupada: primero hay que cerrar su turno. */
+    /**
+     * No se borra una caja ocupada ni una con historial.
+     *
+     * La guarda del turno abierto ya estaba; faltaba la del historial cerrado:
+     * cash_registers.cash_point_id es NOT NULL con llave foránea, así que
+     * borrar una caja con turnos pasados reventaba con el error crudo de
+     * Postgres en vez de explicar por qué no se puede.
+     */
     @Transactional
     public void delete(Long id) {
         CashPoint p = find(id);
-        sessions.findByCompanyIdAndCashPointIdAndStatus(tenant.getCompanyId(), id, "open")
+        Long companyId = tenant.getCompanyId();
+        sessions.findByCompanyIdAndCashPointIdAndStatus(companyId, id, "open")
                 .ifPresent(s -> { throw new IllegalStateException(
                         "La caja " + p.getCode() + " tiene un turno abierto; ciérralo antes de eliminarla"); });
+        long turnos = sessions.countByCompanyIdAndCashPointId(companyId, id);
+        if (turnos > 0) {
+            throw new IllegalStateException("La caja " + p.getCode() + " tiene " + turnos
+                    + (turnos == 1 ? " turno registrado" : " turnos registrados")
+                    + " y no se puede eliminar. Márcala como inactiva.");
+        }
         points.delete(p);
     }
 

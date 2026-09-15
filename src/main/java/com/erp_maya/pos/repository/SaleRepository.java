@@ -2,6 +2,8 @@ package com.erp_maya.pos.repository;
 
 import com.erp_maya.pos.domain.Sale;
 import io.micronaut.data.annotation.Repository;
+
+import java.util.List;
 import io.micronaut.data.jpa.repository.JpaRepository;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
@@ -17,4 +19,9 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
 
     /** Ventas emitidas contra un proyecto: base del facturado. */
     java.util.List<Sale> findByCompanyIdAndProjectId(Long companyId, Long projectId);
+
+    /** Ventas del turno, de la más reciente a la más antigua. */
+    List<Sale> findByCompanyIdAndCashRegisterIdOrderByIdDesc(Long companyId, Long cashRegisterId);
+
+    long countByCompanyIdAndCashRegisterId(Long companyId, Long cashRegisterId);
 }

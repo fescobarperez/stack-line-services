@@ -20,6 +20,9 @@ public interface CashRegisterRepository extends JpaRepository<CashRegister, Long
     /** El turno que ocupa una caja ahora mismo. La base garantiza que sea uno solo. */
     Optional<CashRegister> findByCompanyIdAndCashPointIdAndStatus(Long companyId, Long cashPointId, String status);
 
+    /** Turnos de una caja, abiertos o cerrados: su historial la ancla. */
+    long countByCompanyIdAndCashPointId(Long companyId, Long cashPointId);
+
     /** El turno abierto de un cajero, esté en la caja que esté. */
     Optional<CashRegister> findByCompanyIdAndUserIdAndStatus(Long companyId, Long userId, String status);
 

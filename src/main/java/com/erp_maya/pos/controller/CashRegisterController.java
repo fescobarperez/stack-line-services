@@ -34,6 +34,12 @@ public class CashRegisterController {
         return service.get(id);
     }
 
+    /** Detalle del turno para el panel lateral: cifras y sus ventas. */
+    @Get("/{id}/detail")
+    public CashRegisterDtos.ShiftDetail detail(Long id) {
+        return service.detail(id);
+    }
+
     /** Turnos abiertos de días anteriores: bloquean la apertura hasta que se cierren. */
     @Get("/pending")
     public List<CashRegisterDtos.Response> pending() {

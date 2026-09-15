@@ -5,15 +5,18 @@ import com.erp_maya.common.TenantContext;
 import com.erp_maya.company.domain.Branch;
 import com.erp_maya.pos.domain.CashPoint;
 import com.erp_maya.pos.domain.CashRegister;
+import com.erp_maya.pos.domain.Sale;
 import com.erp_maya.pos.dto.CashRegisterDtos;
 import com.erp_maya.pos.repository.CashPointRepository;
 import com.erp_maya.pos.repository.CashRegisterRepository;
+import com.erp_maya.pos.repository.SaleRepository;
 import com.erp_maya.security.domain.User;
 import com.erp_maya.security.repository.UserRepository;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -40,13 +43,54 @@ public class CashRegisterService {
     private final UserRepository users;
     private final TenantContext tenant;
 
+    private final SaleRepository sales;
+
     public CashRegisterService(CashRegisterRepository registers, CashPointRepository points,
-                               UserRepository users, TenantContext tenant) {
+                               UserRepository users, SaleRepository sales, TenantContext tenant) {
         this.registers = registers;
         this.points = points;
         this.users = users;
+        this.sales = sales;
         this.tenant = tenant;
     }
+
+    /** Cuántas ventas del turno se listan en el detalle. */
+    private static final int ULTIMAS = 10;
+
+    /**
+     * Detalle de un turno: sus cifras más las ventas que lo componen.
+     *
+     * Va aparte de `get` porque recorre las ventas del turno, y eso no tiene
+     * por qué pagarlo el listado de cajas abiertas, que se refresca solo.
+     */
+    @Transactional
+    public CashRegisterDtos.ShiftDetail detail(Long id) {
+        Long companyId = tenant.getCompanyId();
+        CashRegister r = find(id);
+        List<Sale> ventas = sales.findByCompanyIdAndCashRegisterIdOrderByIdDesc(companyId, id);
+
+        BigDecimal total = valor(r.getSalesTotal());
+        BigDecimal efectivo = valor(r.getSalesCash());
+        BigDecimal tarjeta = valor(r.getSalesCard());
+        // Transferencia, cheque y depósito entran al total y a ninguno de los
+        // dos cubos: sin este renglón las cifras no cuadran a la vista.
+        BigDecimal otros = total.subtract(efectivo).subtract(tarjeta).max(BigDecimal.ZERO);
+        BigDecimal esperado = valor(r.getOpeningAmount()).add(efectivo).subtract(valor(r.getRefunds()));
+        long tickets = ventas.size();
+        BigDecimal promedio = tickets == 0 ? BigDecimal.ZERO
+                : total.divide(BigDecimal.valueOf(tickets), 2, RoundingMode.HALF_UP);
+
+        List<CashRegisterDtos.ShiftSale> ultimas = ventas.stream().limit(ULTIMAS)
+                .map(v -> new CashRegisterDtos.ShiftSale(v.getId(), v.getDocNumber(), v.getSaleDate(),
+                        v.getPaymentMethod(), valor(v.getTotal()), v.getStatus()))
+                .toList();
+
+        return new CashRegisterDtos.ShiftDetail(toResponse(r), tickets,
+                dinero(otros), dinero(esperado), promedio, ultimas);
+    }
+
+    private static BigDecimal valor(BigDecimal v) { return v == null ? BigDecimal.ZERO : v; }
+    private static BigDecimal dinero(BigDecimal v) { return valor(v).setScale(2, RoundingMode.HALF_UP); }
 
     @Transactional
     public List<CashRegisterDtos.Response> list(String status) {
