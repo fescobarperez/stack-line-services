@@ -10,6 +10,7 @@ import com.erp_maya.reports.dto.ReportsDtos.BranchRow;
 import com.erp_maya.reports.dto.ReportsDtos.CategoryMargin;
 import com.erp_maya.reports.dto.ReportsDtos.PaymentRow;
 import com.erp_maya.reports.dto.ReportsDtos.SalesBookRow;
+import com.erp_maya.reports.dto.ReportsDtos.SalesDetailRow;
 import com.erp_maya.reports.dto.ReportsDtos.SalesReport;
 import io.micronaut.data.model.Pageable;
 import jakarta.inject.Singleton;
@@ -114,7 +115,24 @@ public class ReportsService {
                 })
                 .toList();
 
+        // Subtotal e IVA se guardan siempre en positivo (ver la 045: el signo lo
+        // pone signed_total). En un listado que se suma, una nota de credito
+        // tiene que restar tambien en esas dos columnas.
+        List<SalesDetailRow> salesDetail = sales.salesDetailSince(companyId, from).stream()
+                .map(r -> {
+                    BigDecimal total = bd(r[8]);
+                    boolean resta = total.signum() < 0;
+                    BigDecimal subtotal = bd(r[6]);
+                    BigDecimal tax = bd(r[7]);
+                    return new SalesDetailRow((Long) r[0], (String) r[1], (String) r[2], (Instant) r[3],
+                            (String) r[4], (String) r[5],
+                            resta ? subtotal.negate() : subtotal,
+                            resta ? tax.negate() : tax,
+                            total, (String) r[9], (String) r[10]);
+                })
+                .toList();
+
         return new SalesReport(totalSales, totalTickets, avgTicket, trend, byBranch, byPayment,
-                topProducts, byCategory, salesBook);
+                topProducts, byCategory, salesBook, salesDetail);
     }
 }

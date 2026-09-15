@@ -36,4 +36,14 @@ public interface DashboardSaleRepository extends JpaRepository<Sale, Long> {
     /** [ paymentMethod, SUM(total) ] por método de pago desde una fecha. */
     @Query("SELECT s.paymentMethod, SUM(s.signedTotal) FROM Sale s WHERE s.companyId = :companyId AND s.saleDate >= :from GROUP BY s.paymentMethod ORDER BY SUM(s.signedTotal) DESC")
     List<Object[]> paymentBreakdownSince(Long companyId, Instant from);
+
+    /**
+     * [ id, docNumber, docType, saleDate, nit, cliente, subtotal, tax, signedTotal,
+     *   paymentMethod, status ] de cada venta del período, la mas reciente primero.
+     * LEFT JOIN porque el consumidor final no lleva cliente asociado.
+     */
+    @Query("SELECT s.id, s.docNumber, s.docType, s.saleDate, c.nit, c.name, s.subtotal, s.tax, "
+         + "s.signedTotal, s.paymentMethod, s.status FROM Sale s LEFT JOIN s.client c "
+         + "WHERE s.companyId = :companyId AND s.saleDate >= :from ORDER BY s.saleDate DESC")
+    List<Object[]> salesDetailSince(Long companyId, Instant from);
 }

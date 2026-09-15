@@ -5,6 +5,7 @@ import com.erp_maya.dashboard.dto.DashboardDtos.TrendPoint;
 import io.micronaut.serde.annotation.Serdeable;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -26,6 +27,19 @@ public final class ReportsDtos {
     /** Fila del Libro de Ventas (SAT): gravable + IVA 12% derivados del total. */
     @Serdeable
     public record SalesBookRow(LocalDate date, long tickets, BigDecimal taxable, BigDecimal iva, BigDecimal total) {}
+
+    /**
+     * Una venta del período, con su cliente y su desglose fiscal.
+     *
+     * El IVA sale de `sales.tax`, que se guarda venta por venta, y no de
+     * dividir el total por la tasa vigente como hace el libro de ventas: aquí
+     * cada fila conserva la tasa con la que realmente se emitió.
+     */
+    @Serdeable
+    public record SalesDetailRow(Long id, String docNumber, String docType, Instant date,
+                                 String clientNit, String clientName,
+                                 BigDecimal subtotal, BigDecimal tax, BigDecimal total,
+                                 String paymentMethod, String status) {}
 
     /**
      * Un proyecto en el ranking de rentabilidad.
@@ -76,5 +90,5 @@ public final class ReportsDtos {
     public record SalesReport(BigDecimal totalSales, long totalTickets, BigDecimal avgTicket,
                               List<TrendPoint> trend, List<BranchRow> byBranch, List<PaymentRow> byPayment,
                               List<TopProduct> topProducts, List<CategoryMargin> byCategory,
-                              List<SalesBookRow> salesBook) {}
+                              List<SalesBookRow> salesBook, List<SalesDetailRow> salesDetail) {}
 }
