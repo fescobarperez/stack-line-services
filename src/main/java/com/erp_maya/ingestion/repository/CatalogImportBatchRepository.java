@@ -1,0 +1,14 @@
+package com.erp_maya.ingestion.repository;
+
+import com.erp_maya.ingestion.domain.CatalogImportBatch;
+import io.micronaut.data.annotation.Repository;
+import io.micronaut.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface CatalogImportBatchRepository extends JpaRepository<CatalogImportBatch, Long> {
+    List<CatalogImportBatch> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
+    Optional<CatalogImportBatch> findByIdAndCompanyId(Long id, Long companyId);
+}

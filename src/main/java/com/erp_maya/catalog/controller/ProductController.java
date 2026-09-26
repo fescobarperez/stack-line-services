@@ -7,6 +7,8 @@ import com.erp_maya.catalog.dto.ProductSupplierDtos;
 import com.erp_maya.catalog.dto.SupplierPriceDtos;
 import com.erp_maya.catalog.service.ProductService;
 import com.erp_maya.catalog.service.SupplierPriceService;
+import com.erp_maya.ingestion.dto.SupplierCatalogItemDtos;
+import com.erp_maya.ingestion.service.SupplierCatalogItemService;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
@@ -28,10 +30,13 @@ public class ProductController {
 
     private final ProductService service;
     private final SupplierPriceService prices;
+    private final SupplierCatalogItemService sources;
 
-    public ProductController(ProductService service, SupplierPriceService prices) {
+    public ProductController(ProductService service, SupplierPriceService prices,
+                              SupplierCatalogItemService sources) {
         this.service = service;
         this.prices = prices;
+        this.sources = sources;
     }
 
     @Get
@@ -73,6 +78,11 @@ public class ProductController {
     @Get("/{id}/supplier-comparison")
     public SupplierPriceDtos.ProductComparison compareSuppliers(Long id) {
         return prices.compareProduct(id);
+    }
+
+    @Get("/{id}/supplier-sources")
+    public List<SupplierCatalogItemDtos.Response> supplierSources(Long id) {
+        return sources.listByProduct(id);
     }
 
     /**
