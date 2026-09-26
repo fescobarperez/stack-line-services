@@ -38,6 +38,7 @@ dependencies {
     // sesión desde application.properties, y aquí el servidor SMTP es de cada
     // empresa y se resuelve en tiempo de ejecución.
     implementation("org.eclipse.angus:angus-mail:2.0.3")
+    implementation("org.jsoup:jsoup:1.22.2")
 
     // PDF del lado del servidor. openhtmltopdf y no una librería de layout
     // programático porque la plantilla ya existe en HTML/CSS para el PDF del

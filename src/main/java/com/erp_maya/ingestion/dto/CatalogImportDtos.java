@@ -16,10 +16,11 @@ public final class CatalogImportDtos {
     @Serdeable
     public record PreviewRequest(@NotNull Long supplierId,
                                  Long supplierWebsiteId,
-                                 @NotBlank String sourceType,
+                                 String sourceType,
                                  String sourceReference,
                                  String userPrompt,
-                                 @NotNull @Valid List<Row> items) {}
+                                 @NotNull @Valid List<Row> items,
+                                 Long crawlRunId) {}
 
     @Serdeable
     public record Row(@NotBlank String name,

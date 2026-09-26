@@ -90,6 +90,7 @@ public class CatalogImportService {
         batch.setSupplierWebsiteId(request.supplierWebsiteId());
         batch.setSourceType(sourceType);
         batch.setSourceReference(request.sourceReference());
+        batch.setCrawlRunId(request.crawlRunId());
         batch.setStatus("preview");
         CatalogImportBatch saved = batches.save(batch);
 
