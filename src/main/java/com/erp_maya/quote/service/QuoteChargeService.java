@@ -432,7 +432,8 @@ public class QuoteChargeService {
      * alguien y el documento no puede moverse solo.
      */
     public BigDecimal rateFor(Quote quote) {
-        if ("borrador".equalsIgnoreCase(quote.getStatus())) {
+        // Un prospecto del asistente también se está armando.
+        if ("borrador".equalsIgnoreCase(quote.getStatus()) || "prospecto".equalsIgnoreCase(quote.getStatus())) {
             return taxService.rate();
         }
         return quote.getTaxRate() != null ? quote.getTaxRate() : taxService.rate();

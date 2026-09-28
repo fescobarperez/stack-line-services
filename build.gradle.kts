@@ -44,7 +44,8 @@ dependencies {
     // navegador: mantener una sola forma de maquetarlo es más barato que
     // reescribir el diseño en código Java.
     implementation("io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.22")
-    compileOnly("io.micronaut:micronaut-http-client")
+    // Cliente HTTP: el ERP reenvía los turnos del asistente a agents-services.
+    implementation("io.micronaut:micronaut-http-client")
     // AWS SDK v2 — S3 + presigner para subidas directas del navegador (logos de empresa).
     // Credenciales por la cadena por defecto (IAM Role en EC2/ECS/Lambda; perfil en local).
     implementation(platform("software.amazon.awssdk:bom:2.29.20"))
