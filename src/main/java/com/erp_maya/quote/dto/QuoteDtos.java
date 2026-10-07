@@ -27,11 +27,18 @@ public final class QuoteDtos {
                           LocalDate quoteDate, LocalDate validUntil, LocalDate deadline,
                           String leadTime, String paymentTerms, String createdBy, String notes,
                           String profitCalcType, BigDecimal profitValue,
-                          @NotEmpty @Valid List<ItemRequest> items) {}
+                          @NotEmpty @Valid List<ItemRequest> items,
+                          // Solo el asistente los manda; con origin="agente" nace como 'prospecto'.
+                          String origin, String channel, String conversationRef) {}
 
     @Serdeable
-    public record UpdateItemRequest(@NotNull Long id, String description,
-                                    @NotNull BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount) {}
+    /**
+     * Renglón a conservar (id) o nuevo (id nulo, con productId o description).
+     * Los que no vengan se eliminan.
+     */
+    public record UpdateItemRequest(Long id, String description,
+                                    @NotNull BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount,
+                                    Long productId, String uom) {}
 
     @Serdeable
     public record UpdateRequest(LocalDate validUntil, String notes,
@@ -55,7 +62,8 @@ public final class QuoteDtos {
                            BigDecimal subtotal, BigDecimal tax, BigDecimal taxRate,
                            String profitCalcType, BigDecimal profitValue, BigDecimal profitAmount,
                            BigDecimal total, String status, String notes,
-                           List<ItemResponse> items, List<HistoryEntry> history) {}
+                           List<ItemResponse> items, List<HistoryEntry> history,
+                           String origin, String channel, String conversationRef) {}
 
     /** Cambio de estado (enviar/aprobar/rechazar/convertir). */
     @Serdeable

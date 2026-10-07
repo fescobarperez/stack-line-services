@@ -49,6 +49,11 @@ public class QuoteService {
 
     private final DocumentSequenceService sequences;
 
+    /** Origen de las cotizaciones que crea el asistente comercial. */
+    public static final String ORIGEN_AGENTE = "agente";
+    /** Estado inicial de lo que crea el asistente: editable, aún no revisado. */
+    public static final String ESTADO_PROSPECTO = "prospecto";
+
     public QuoteService(QuoteRepository quotes, QuoteHistoryRepository history, ProductRepository products,
                         ClientRepository clients, Projects projects, ProjectQuoteRepository projectQuotes,
                         Materials projectMaterials, TenantContext tenant, TaxService taxService,
@@ -123,7 +128,13 @@ public class QuoteService {
         quote.setNotes(req.notes());
         quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
         quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
-        quote.setStatus(rfq ? "solicitada" : "borrador");
+        // Lo que crea el asistente entra como prospecto: se edita como un
+        // borrador, pero no sale al cliente hasta que alguien lo revisa.
+        boolean deAgente = !rfq && ORIGEN_AGENTE.equalsIgnoreCase(req.origin());
+        quote.setStatus(rfq ? "solicitada" : deAgente ? ESTADO_PROSPECTO : "borrador");
+        quote.setOrigin(deAgente ? ORIGEN_AGENTE : null);
+        quote.setChannel(deAgente ? req.channel() : null);
+        quote.setConversationRef(deAgente ? req.conversationRef() : null);
         Client quoteClient = null;
         // Toda cotización a cliente queda anclada a un proyecto. RFQ no participa
         // en proyectos: sigue siendo un documento de compras independiente.
@@ -191,8 +202,8 @@ public class QuoteService {
         Long companyId = tenant.getCompanyId();
         Quote quote = quotes.findByIdAndCompanyId(id, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
-        if (!"borrador".equalsIgnoreCase(quote.getStatus()) && !"draft".equalsIgnoreCase(quote.getStatus())) {
-            throw new IllegalStateException("Solo se pueden editar cotizaciones en borrador");
+        if (!esEditable(quote.getStatus())) {
+            throw new IllegalStateException("Solo se pueden editar cotizaciones en borrador o prospecto");
         }
 
         LocalDate quoteDate = quote.getQuoteDate() != null ? quote.getQuoteDate() : LocalDate.now();
@@ -214,11 +225,29 @@ public class QuoteService {
         var itemsById = quote.getItems().stream()
                 .collect(java.util.stream.Collectors.toMap(QuoteItem::getId, java.util.function.Function.identity()));
         var keptItemIds = new java.util.HashSet<Long>();
+        // Renglones nuevos (sin id): se agregan DESPUÉS de podar los que no
+        // vinieron, porque aún no tienen id y la poda los quitaría.
+        var nuevos = new java.util.ArrayList<QuoteItem>();
         BigDecimal subtotal = BigDecimal.ZERO;
         for (QuoteDtos.UpdateItemRequest itemReq : req.items()) {
-            QuoteItem item = itemsById.get(itemReq.id());
-            if (item == null) {
-                throw new IllegalStateException("La línea " + itemReq.id() + " no pertenece a la cotización");
+            QuoteItem item;
+            if (itemReq.id() == null) {
+                item = new QuoteItem();
+                if (itemReq.productId() != null) {
+                    Product product = products.findByIdAndCompanyId(itemReq.productId(), companyId)
+                            .orElseThrow(() -> new ResourceNotFoundException("Producto " + itemReq.productId() + " no encontrado"));
+                    item.setProduct(product);
+                } else if (itemReq.description() == null || itemReq.description().isBlank()) {
+                    throw new IllegalStateException("Una línea nueva necesita producto o descripción");
+                }
+                item.setUom(itemReq.uom());
+                nuevos.add(item);
+            } else {
+                item = itemsById.get(itemReq.id());
+                if (item == null) {
+                    throw new IllegalStateException("La línea " + itemReq.id() + " no pertenece a la cotización");
+                }
+                keptItemIds.add(item.getId());
             }
             if (itemReq.quantity() == null || itemReq.quantity().signum() <= 0) {
                 throw new IllegalStateException("La cantidad de cada línea debe ser mayor que cero");
@@ -236,7 +265,6 @@ public class QuoteService {
             item.setUnitPrice(unitPrice);
             item.setDiscount(discount);
             item.setLineTotal(lineTotal);
-            keptItemIds.add(item.getId());
             subtotal = subtotal.add(lineTotal);
         }
 
@@ -248,6 +276,7 @@ public class QuoteService {
             }
         }
         quote.getItems().removeIf(item -> !keptItemIds.contains(item.getId()));
+        nuevos.forEach(quote::addItem);
 
         BigDecimal taxRate = quoteCharges.rateFor(quote);
         BigDecimal tax = subtotal.multiply(taxRate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
@@ -409,6 +438,13 @@ public class QuoteService {
                 q.getProjectId(),
                 q.getSubtotal(), q.getTax(), q.getTaxRate(),
                 q.getProfitCalcType(), q.getProfitValue(), q.getProfitAmount(), q.getTotal(), q.getStatus(), q.getNotes(),
-                items, historyOut);
+                items, historyOut,
+                q.getOrigin(), q.getChannel(), q.getConversationRef());
+    }
+
+    /** Estados en los que el documento todavía se arma y se puede editar. */
+    private static boolean esEditable(String status) {
+        return "borrador".equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)
+                || ESTADO_PROSPECTO.equalsIgnoreCase(status);
     }
 }

@@ -92,6 +92,18 @@ public class Quote {
 
     private String notes;
 
+    /** Quien la creo: null = formulario del ERP, "agente" = asistente comercial. */
+    @Column(name = "origin")
+    private String origin;
+
+    /** Canal de la conversacion que la origino (erp, whatsapp, api). */
+    @Column(name = "channel")
+    private String channel;
+
+    /** Id publico de la conversacion en agents-services (cnv_...). */
+    @Column(name = "conversation_ref")
+    private String conversationRef;
+
     /** 'client' (cotización a cliente) | 'supplier' (RFQ a proveedor). */
     @Column(name = "party_type", nullable = false)
     private String partyType = "client";
@@ -198,6 +210,12 @@ public class Quote {
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
+    public String getChannel() { return channel; }
+    public void setChannel(String channel) { this.channel = channel; }
+    public String getConversationRef() { return conversationRef; }
+    public void setConversationRef(String conversationRef) { this.conversationRef = conversationRef; }
 
     public List<QuoteItem> getItems() { return items; }
     public void setItems(List<QuoteItem> items) { this.items = items; }
