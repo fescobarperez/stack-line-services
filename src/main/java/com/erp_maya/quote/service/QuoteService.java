@@ -20,6 +20,9 @@ import com.erp_maya.quote.domain.QuoteItem;
 import com.erp_maya.quote.dto.QuoteDtos;
 import com.erp_maya.quote.repository.QuoteHistoryRepository;
 import com.erp_maya.quote.repository.QuoteRepository;
+import com.erp_maya.quote.repository.QuoteNotificationRepository;
+import com.erp_maya.quote.domain.QuoteNotification;
+import io.micronaut.serde.ObjectMapper;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 import jakarta.inject.Singleton;
@@ -48,18 +51,30 @@ public class QuoteService {
     private final TenantContext tenant;
 
     private final DocumentSequenceService sequences;
+    private final QuoteNotificationRepository avisos;
+    private final ObjectMapper json;
+
+    /** Canal por el que entró la conversación cuando la cotización la armó el asistente. */
+    private static final String CANAL_WHATSAPP = "whatsapp";
+    private static final String AVISO_ENVIADA = "cotizacion_enviada";
 
     /** Origen de las cotizaciones que crea el asistente comercial. */
     public static final String ORIGEN_AGENTE = "agente";
-    /** Estado inicial de lo que crea el asistente: editable, aún no revisado. */
+    /** Lo que el asistente arma con el cliente: solo el asistente la edita. */
+    public static final String ESTADO_ABIERTA = "abierta";
+    /** El cliente la dio por terminada; espera que un vendedor la abra. */
     public static final String ESTADO_PROSPECTO = "prospecto";
+    /** Un vendedor la abrió: desde aquí es suya. */
+    public static final String ESTADO_BORRADOR = "borrador";
 
     public QuoteService(QuoteRepository quotes, QuoteHistoryRepository history, ProductRepository products,
                         ClientRepository clients, Projects projects, ProjectQuoteRepository projectQuotes,
                         Materials projectMaterials, TenantContext tenant, TaxService taxService,
                         QuoteChargeService quoteCharges, QuotePlanService paymentPlans,
-                        DocumentSequenceService sequences) {
+                        DocumentSequenceService sequences, QuoteNotificationRepository avisos, ObjectMapper json) {
         this.sequences = sequences;
+        this.avisos = avisos;
+        this.json = json;
         this.quotes = quotes;
         this.history = history;
         this.products = products;
@@ -76,9 +91,12 @@ public class QuoteService {
     @Transactional
     public Page<QuoteDtos.Response> list(String partyType, Pageable pageable) {
         Long companyId = tenant.getCompanyId();
+        // Las que el asistente todavía arma con el cliente no se listan: no
+        // son trabajo del vendedor hasta que el cliente las termine.
         Page<Quote> page = (partyType == null || partyType.isBlank())
-                ? quotes.findByCompanyIdOrderByQuoteDateDesc(companyId, pageable)
-                : quotes.findByCompanyIdAndPartyTypeOrderByQuoteDateDesc(companyId, partyType, pageable);
+                ? quotes.findByCompanyIdAndStatusNotEqualOrderByQuoteDateDesc(companyId, ESTADO_ABIERTA, pageable)
+                : quotes.findByCompanyIdAndPartyTypeAndStatusNotEqualOrderByQuoteDateDesc(
+                        companyId, partyType, ESTADO_ABIERTA, pageable);
         return page.map(q -> {
             if ("client".equalsIgnoreCase(q.getPartyType())) quoteCharges.getSummary(q.getId());
             return toResponse(q, List.of());
@@ -128,10 +146,10 @@ public class QuoteService {
         quote.setNotes(req.notes());
         quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
         quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
-        // Lo que crea el asistente entra como prospecto: se edita como un
-        // borrador, pero no sale al cliente hasta que alguien lo revisa.
+        // Lo que crea el asistente nace 'abierta': la arma con el cliente y
+        // pasa a prospecto cuando el cliente la da por terminada.
         boolean deAgente = !rfq && ORIGEN_AGENTE.equalsIgnoreCase(req.origin());
-        quote.setStatus(rfq ? "solicitada" : deAgente ? ESTADO_PROSPECTO : "borrador");
+        quote.setStatus(rfq ? "solicitada" : deAgente ? ESTADO_ABIERTA : ESTADO_BORRADOR);
         quote.setOrigin(deAgente ? ORIGEN_AGENTE : null);
         quote.setChannel(deAgente ? req.channel() : null);
         quote.setConversationRef(deAgente ? req.conversationRef() : null);
@@ -296,11 +314,14 @@ public class QuoteService {
         Long companyId = tenant.getCompanyId();
         Quote quote = quotes.findByIdAndCompanyId(id, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
-        if ("enviada".equalsIgnoreCase(req.status()) && !"enviada".equalsIgnoreCase(quote.getStatus())) {
+        boolean pasaAEnviada = "enviada".equalsIgnoreCase(req.status()) && !"enviada".equalsIgnoreCase(quote.getStatus());
+        if (pasaAEnviada) {
             validateExpirationBeforeClientDelivery(quote);
             paymentPlans.validateReadyToSend(id, companyId);
         }
         quote.setStatus(req.status());
+        // Cada envío es una versión: la decisión del cliente se ata a la que vio.
+        if (pasaAEnviada) quote.setSentVersion(quote.getSentVersion() + 1);
         Quote saved = quotes.update(quote);
 
         // Cotización rechazada/cancelada: sus materiales vuelven al pool
@@ -334,7 +355,206 @@ public class QuoteService {
         });
         String action = req.note() != null && !req.note().isBlank() ? req.note() : "Estado → " + req.status();
         history.save(new QuoteHistory(companyId, saved.getId(), action, req.actor()));
+        // Si la pidió por WhatsApp, también le llega por ahí (además del correo,
+        // que manda el controlador). En la misma transacción: si el cambio de
+        // estado no se guarda, tampoco queda el aviso.
+        if (pasaAEnviada && esDeWhatsapp(saved)) encolarEnviadaPorWhatsapp(saved, false);
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
+    }
+
+    /** Solo las que nacieron en una conversación de WhatsApp pueden avisarse por ahí. */
+    public static boolean esDeWhatsapp(Quote q) {
+        return CANAL_WHATSAPP.equalsIgnoreCase(q.getChannel())
+                && q.getConversationRef() != null && !q.getConversationRef().isBlank();
+    }
+
+    /**
+     * El vendedor vuelve a mandar por WhatsApp la cotización enviada: mismo
+     * PDF y botones de la versión VIGENTE (no sube la versión, así un botón que
+     * el cliente ya tenía sigue valiendo). Solo si nació por WhatsApp.
+     */
+    @Transactional
+    public QuoteDtos.Response reenviarPorWhatsapp(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!esDeWhatsapp(q)) {
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " no se creó por WhatsApp");
+        }
+        if (!"enviada".equalsIgnoreCase(q.getStatus())) {
+            throw new IllegalStateException("Solo se reenvía una cotización enviada (está " + q.getStatus() + ")");
+        }
+        validateExpirationBeforeClientDelivery(q);
+        encolarEnviadaPorWhatsapp(q, true);
+        history.save(new QuoteHistory(companyId, q.getId(),
+                "Reenviada por WhatsApp (versión " + q.getSentVersion() + ")", actor));
+        return toResponse(q, history.findByQuoteIdOrderByCreatedAtAsc(q.getId()));
+    }
+
+    private void encolarEnviadaPorWhatsapp(Quote q, boolean reenvio) {
+        var payload = new QuoteDtos.QuoteSentPayload(q.getId(), q.getDocNumber(), q.getClientName(),
+                "Q " + new java.text.DecimalFormat("#,##0.00", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.US))
+                        .format((q.getTotal() == null ? BigDecimal.ZERO : q.getTotal()).setScale(2, RoundingMode.HALF_UP)),
+                "/api/quotes/" + q.getId() + "/pdf", q.getSentVersion(), reenvio);
+        QuoteNotification n = new QuoteNotification();
+        n.setCompanyId(q.getCompanyId());
+        n.setQuoteId(q.getId());
+        n.setKind(AVISO_ENVIADA);
+        n.setChannel(q.getChannel());
+        n.setConversationRef(q.getConversationRef());
+        try {
+            n.setPayload(json.writeValueAsString(payload));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("No se pudo armar el aviso de envío al cliente", e);
+        }
+        avisos.save(n);
+    }
+
+    // ── Decisión del cliente sobre la cotización enviada ───────────────────
+
+    /** Motivos de rechazo del cliente. Opcionales: nunca se le exigen. */
+    public static final List<QuoteDtos.ClientReason> MOTIVOS_CLIENTE = List.of(
+            new QuoteDtos.ClientReason("precio", "Precio"),
+            new QuoteDtos.ClientReason("plazo_entrega", "Plazo de entrega"),
+            new QuoteDtos.ClientReason("compro_en_otro_lugar", "Compró en otro lugar"),
+            new QuoteDtos.ClientReason("ya_no_lo_necesita", "Ya no lo necesita"),
+            new QuoteDtos.ClientReason("otro", "Otro"));
+
+    /**
+     * El cliente aprueba la versión que se le envió. Solo si la cotización
+     * sigue 'enviada', en ESA versión y vigente: así nunca aprueba algo
+     * distinto de lo que vio.
+     */
+    @Transactional
+    public QuoteDtos.Response aprobarPorCliente(Long id, QuoteDtos.ClientDecisionRequest req) {
+        Quote q = paraDecision(id, req.version());
+        if (q.getValidUntil() != null && q.getValidUntil().isBefore(LocalDate.now())) {
+            history.save(new QuoteHistory(q.getCompanyId(), id,
+                    "El cliente intentó aprobarla vencida (válida hasta " + q.getValidUntil() + "): hay que renovarla", req.actor()));
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " venció el " + q.getValidUntil()
+                    + "; tu asesor debe renovarla");
+        }
+        q.setClientDecidedAt(Instant.now());
+        quotes.update(q);
+        return updateStatus(id, new QuoteDtos.StatusRequest("aprobada",
+                "Aprobada por el cliente (versión " + q.getSentVersion() + ")", req.actor()));
+    }
+
+    /** El cliente rechaza la versión enviada. El motivo es opcional. */
+    @Transactional
+    public QuoteDtos.Response rechazarPorCliente(Long id, QuoteDtos.ClientDecisionRequest req) {
+        Quote q = paraDecision(id, req.version());
+        q.setClientDecidedAt(Instant.now());
+        aplicarMotivo(q, req.reasonCode(), req.note());
+        quotes.update(q);
+        String nota = "Rechazada por el cliente (versión " + q.getSentVersion() + ")"
+                + (q.getClientReasonCode() != null ? " · motivo: " + etiquetaMotivo(q.getClientReasonCode()) : "");
+        return updateStatus(id, new QuoteDtos.StatusRequest("rechazada", nota, req.actor()));
+    }
+
+    /** El cliente cuenta el motivo después de rechazar. Solo sobre una rechazada. */
+    @Transactional
+    public QuoteDtos.Response motivoDelCliente(Long id, QuoteDtos.ClientReasonRequest req) {
+        Long companyId = tenant.getCompanyId();
+        Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!"rechazada".equalsIgnoreCase(q.getStatus())) {
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " no está rechazada");
+        }
+        aplicarMotivo(q, req.reasonCode(), req.note());
+        quotes.update(q);
+        history.save(new QuoteHistory(companyId, id, "Motivo del rechazo: " + etiquetaMotivo(q.getClientReasonCode())
+                + (q.getClientReasonNote() != null ? " — " + q.getClientReasonNote() : ""), null));
+        return get(id);
+    }
+
+    private Quote paraDecision(Long id, Integer version) {
+        Long companyId = tenant.getCompanyId();
+        Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!"enviada".equalsIgnoreCase(q.getStatus())) {
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " está " + q.getStatus()
+                    + ": no espera una decisión del cliente");
+        }
+        if (version == null || version != q.getSentVersion()) {
+            throw new IllegalStateException("VERSION_ANTERIOR: la cotización " + q.getDocNumber()
+                    + " tiene una versión más reciente (v" + q.getSentVersion() + ")");
+        }
+        return q;
+    }
+
+    private void aplicarMotivo(Quote q, String codigo, String nota) {
+        if (codigo != null && !codigo.isBlank()) {
+            boolean valido = MOTIVOS_CLIENTE.stream().anyMatch(m -> m.code().equals(codigo));
+            q.setClientReasonCode(valido ? codigo : "otro");
+        }
+        if (nota != null && !nota.isBlank()) q.setClientReasonNote(nota.trim());
+    }
+
+    private static String etiquetaMotivo(String codigo) {
+        return MOTIVOS_CLIENTE.stream().filter(m -> m.code().equals(codigo)).map(QuoteDtos.ClientReason::label)
+                .findFirst().orElse(codigo == null ? "sin motivo" : codigo);
+    }
+
+    // ── Ciclo de vida de las cotizaciones del asistente ─────────────────────
+
+    /** abierta → prospecto: el cliente la dio por terminada. */
+    @Transactional
+    public QuoteDtos.Response finalizar(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        if (quotes.updateStatusSiEsta(id, companyId, ESTADO_ABIERTA, ESTADO_PROSPECTO) == 0) {
+            Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+            if (ESTADO_PROSPECTO.equalsIgnoreCase(q.getStatus())) return get(id); // ya estaba: idempotente
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " no está abierta (" + q.getStatus() + ")");
+        }
+        history.save(new QuoteHistory(companyId, id, "El cliente la dio por terminada: pasa a revisión", actor));
+        return get(id);
+    }
+
+    /**
+     * prospecto → abierta: el cliente quiere cambiar algo y ningún vendedor la
+     * abrió todavía. Si ya la tomó un vendedor no se puede: el cliente deja
+     * solicitudes de cambio.
+     */
+    @Transactional
+    public QuoteDtos.Response reabrir(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        if (quotes.updateReabrirSiNoTomada(id, companyId) == 0) {
+            Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+            if (ESTADO_ABIERTA.equalsIgnoreCase(q.getStatus())) return get(id);
+            throw new IllegalStateException("La cotización " + q.getDocNumber()
+                    + " ya está en manos de un vendedor; los cambios van como solicitud");
+        }
+        history.save(new QuoteHistory(companyId, id, "Reabierta a pedido del cliente", actor));
+        return get(id);
+    }
+
+    /**
+     * Un vendedor abre el prospecto: pasa a borrador y queda a su nombre. Si
+     * no es un prospecto sin tomar, no hace nada (abrirla otra vez, o una
+     * cotización normal).
+     */
+    @Transactional
+    public QuoteDtos.Response tomar(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        if (quotes.updateTomar(id, companyId, actor, Instant.now()) > 0) {
+            history.save(new QuoteHistory(companyId, id, "Tomada para revisión", actor));
+        }
+        return get(id);
+    }
+
+    /** Las últimas cotizaciones de un cliente, para que el asistente informe su estado. */
+    @Transactional
+    public List<QuoteDtos.ClientQuoteSummary> delCliente(Long clientId, int limite) {
+        Long companyId = tenant.getCompanyId();
+        return quotes.findByCliente(companyId, clientId, Pageable.from(0, Math.max(1, Math.min(limite, 20))))
+                .stream()
+                .map(q -> new QuoteDtos.ClientQuoteSummary(q.getId(), q.getDocNumber(), q.getStatus(),
+                        q.getTotal(), q.getTakenAt() != null, q.getQuoteDate(), q.getUpdatedAt(),
+                        q.getSentVersion(), q.getValidUntil()))
+                .toList();
     }
 
     /** Anota en la bitácora sin tocar el estado ni nada más de la cotización. */
@@ -447,12 +667,14 @@ public class QuoteService {
                 q.getSubtotal(), q.getTax(), q.getTaxRate(),
                 q.getProfitCalcType(), q.getProfitValue(), q.getProfitAmount(), q.getTotal(), q.getStatus(), q.getNotes(),
                 items, historyOut,
-                q.getOrigin(), q.getChannel(), q.getConversationRef());
+                q.getOrigin(), q.getChannel(), q.getConversationRef(),
+                q.getTakenBy(), q.getTakenAt(),
+                q.getSentVersion(), q.getClientReasonCode(), q.getClientReasonNote());
     }
 
     /** Estados en los que el documento todavía se arma y se puede editar. */
     private static boolean esEditable(String status) {
-        return "borrador".equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)
-                || ESTADO_PROSPECTO.equalsIgnoreCase(status);
+        return ESTADO_BORRADOR.equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)
+                || ESTADO_PROSPECTO.equalsIgnoreCase(status) || ESTADO_ABIERTA.equalsIgnoreCase(status);
     }
 }

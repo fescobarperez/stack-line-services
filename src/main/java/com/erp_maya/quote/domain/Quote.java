@@ -137,6 +137,26 @@ public class Quote {
     @Column(name = "created_by")
     private String createdBy;
 
+    /** Vendedor que abrió el prospecto; desde ahí el cliente ya no lo reabre. */
+    @Column(name = "taken_by")
+    private String takenBy;
+
+    @Column(name = "taken_at")
+    private Instant takenAt;
+
+    /** Sube cada vez que pasa a 'enviada': la decisión del cliente es sobre UNA versión. */
+    @Column(name = "sent_version", nullable = false)
+    private int sentVersion;
+
+    @Column(name = "client_reason_code")
+    private String clientReasonCode;
+
+    @Column(name = "client_reason_note")
+    private String clientReasonNote;
+
+    @Column(name = "client_decided_at")
+    private Instant clientDecidedAt;
+
     @OneToMany(mappedBy = "quote", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<QuoteItem> items = new ArrayList<>();
 
@@ -153,6 +173,23 @@ public class Quote {
         item.setCompanyId(this.companyId);
         this.items.add(item);
     }
+
+    public Instant getUpdatedAt() { return updatedAt; }
+
+    public int getSentVersion() { return sentVersion; }
+    public void setSentVersion(int sentVersion) { this.sentVersion = sentVersion; }
+    public String getClientReasonCode() { return clientReasonCode; }
+    public void setClientReasonCode(String clientReasonCode) { this.clientReasonCode = clientReasonCode; }
+    public String getClientReasonNote() { return clientReasonNote; }
+    public void setClientReasonNote(String clientReasonNote) { this.clientReasonNote = clientReasonNote; }
+    public Instant getClientDecidedAt() { return clientDecidedAt; }
+    public void setClientDecidedAt(Instant clientDecidedAt) { this.clientDecidedAt = clientDecidedAt; }
+
+    public String getTakenBy() { return takenBy; }
+    public void setTakenBy(String takenBy) { this.takenBy = takenBy; }
+
+    public Instant getTakenAt() { return takenAt; }
+    public void setTakenAt(Instant takenAt) { this.takenAt = takenAt; }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
