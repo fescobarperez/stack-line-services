@@ -98,7 +98,7 @@ public class QuotePdfService {
     }
 
     private static boolean esProspecto(Quote q) {
-        return "prospecto".equalsIgnoreCase(q.getStatus());
+        return "prospecto".equalsIgnoreCase(q.getStatus()) || "abierta".equalsIgnoreCase(q.getStatus());
     }
 
     private String xhtml(Quote q, String empresa, String nit, String color) {

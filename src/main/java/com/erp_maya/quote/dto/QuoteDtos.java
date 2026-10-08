@@ -63,7 +63,42 @@ public final class QuoteDtos {
                            String profitCalcType, BigDecimal profitValue, BigDecimal profitAmount,
                            BigDecimal total, String status, String notes,
                            List<ItemResponse> items, List<HistoryEntry> history,
-                           String origin, String channel, String conversationRef) {}
+                           String origin, String channel, String conversationRef,
+                           String takenBy, Instant takenAt,
+                           int sentVersion, String clientReasonCode, String clientReasonNote) {}
+
+    /** Resumen para el asistente: en qué va cada cotización del cliente. */
+    @Serdeable
+    public record ClientQuoteSummary(Long id, String docNumber, String status, BigDecimal total,
+                                     boolean taken, LocalDate quoteDate, Instant updatedAt,
+                                     int sentVersion, LocalDate validUntil) {}
+
+    /** Aviso «cotización enviada» para el cliente que la pidió por WhatsApp. */
+    @Serdeable
+    public record QuoteSentPayload(Long quoteId, String docNumber, String clientName, String total, String pdfPath,
+                                   /** La versión enviada: va en los botones de decisión. */
+                                   int version,
+                                   /** Reenvío manual de la misma versión (el texto lo dice). */
+                                   boolean resend) {}
+
+    /**
+     * Decisión del cliente (la registra el asistente). {@code version} es la
+     * que vio: si ya hay otra, se rechaza. El motivo de rechazo es opcional.
+     */
+    @Serdeable
+    public record ClientDecisionRequest(@NotNull Integer version, String reasonCode, String note, String actor) {}
+
+    /** Motivo de rechazo que el cliente da después de rechazar (opcional). */
+    @Serdeable
+    public record ClientReasonRequest(String reasonCode, String note) {}
+
+    /** Motivo de rechazo del cliente (catálogo fijo). */
+    @Serdeable
+    public record ClientReason(String code, String label) {}
+
+    /** Quién hace la operación (el vendedor, o el asistente). */
+    @Serdeable
+    public record ActorRequest(String actor) {}
 
     /** Cambio de estado (enviar/aprobar/rechazar/convertir). */
     @Serdeable
