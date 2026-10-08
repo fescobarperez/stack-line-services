@@ -68,4 +68,8 @@ public final class QuoteDtos {
     /** Cambio de estado (enviar/aprobar/rechazar/convertir). */
     @Serdeable
     public record StatusRequest(@NotNull String status, String note, String actor) {}
+
+    /** Una anotación en la bitácora sin cambiar el estado (p. ej. "Enviada por WhatsApp"). */
+    @Serdeable
+    public record NoteRequest(@NotNull String note, String actor) {}
 }

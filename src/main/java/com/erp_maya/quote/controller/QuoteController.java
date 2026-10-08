@@ -9,17 +9,20 @@ import com.erp_maya.quote.service.QuoteService;
 import com.erp_maya.mail.dto.MailSettingsDtos;
 import com.erp_maya.mail.service.MailService;
 import com.erp_maya.mail.service.QuoteMailService;
+import com.erp_maya.mail.service.QuotePdfService;
 import com.erp_maya.quote.service.QuoteChargeService;
 import com.erp_maya.quote.service.QuotePlanService;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
+import io.micronaut.http.HttpResponse;
 import io.micronaut.http.HttpStatus;
 import io.micronaut.http.annotation.Body;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Delete;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Post;
+import io.micronaut.http.annotation.Produces;
 import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.http.annotation.Status;
@@ -32,10 +35,12 @@ public class QuoteController {
     private final QuoteChargeService charges;
     private final QuotePlanService plan;
     private final QuoteMailService quoteMail;
+    private final QuotePdfService pdf;
 
     public QuoteController(QuoteService service, QuoteChargeService charges, QuotePlanService plan,
-                           QuoteMailService quoteMail) {
+                           QuoteMailService quoteMail, QuotePdfService pdf) {
         this.quoteMail = quoteMail;
+        this.pdf = pdf;
         this.service = service;
         this.charges = charges;
         this.plan = plan;
@@ -77,6 +82,27 @@ public class QuoteController {
             quoteMail.enviar(id);
         }
         return saved;
+    }
+
+    /**
+     * El PDF de la cotización como archivo, el mismo que va adjunto al correo.
+     * Lo usa el asistente para mandarlo por WhatsApp. Un prospecto sale marcado
+     * como preliminar.
+     */
+    @Get("/{id}/pdf")
+    @Produces("application/pdf")
+    public HttpResponse<byte[]> pdf(Long id) {
+        return pdf.generar(id)
+                .map(bytes -> HttpResponse.ok(bytes)
+                        .header("Content-Disposition", "inline; filename=\"Cotizacion-" + id + ".pdf\""))
+                .orElseGet(HttpResponse::notFound);
+    }
+
+    /** Nota en la bitácora sin cambiar el estado. */
+    @Post("/{id}/notes")
+    @Status(HttpStatus.NO_CONTENT)
+    public void addNote(Long id, @Valid @Body QuoteDtos.NoteRequest request) {
+        service.addNote(id, request);
     }
 
     /** Reenvío manual, para cuando el cliente dice que no le llegó. */
