@@ -5,6 +5,7 @@ import com.erp_maya.company.domain.Company;
 import com.erp_maya.company.repository.CompanyRepository;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteItem;
+import com.erp_maya.quote.repository.QuoteRepository;
 import com.erp_maya.settings.repository.CompanySettingRepository;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import jakarta.inject.Singleton;
@@ -14,6 +15,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Optional;
 
 /**
  * Genera el PDF de la cotización en el servidor.
@@ -35,12 +37,20 @@ public class QuotePdfService {
     private final CompanyRepository companies;
     private final CompanySettingRepository settings;
     private final TenantContext tenant;
+    private final QuoteRepository quotes;
 
     public QuotePdfService(CompanyRepository companies, CompanySettingRepository settings,
-                           TenantContext tenant) {
+                           TenantContext tenant, QuoteRepository quotes) {
         this.companies = companies;
         this.settings = settings;
         this.tenant = tenant;
+        this.quotes = quotes;
+    }
+
+    /** El PDF de una cotización de la empresa actual, o vacío si no existe. */
+    public Optional<byte[]> generar(Long quoteId) {
+        // Con fetch join: recorrer las líneas de una entidad desprendida revienta.
+        return quotes.findWithItems(quoteId, tenant.getCompanyId()).map(q -> generar(q));
     }
 
     public byte[] generar(Quote q) {
@@ -69,6 +79,28 @@ public class QuotePdfService {
                 .orElse(porDefecto);
     }
 
+    /**
+     * Un prospecto lo armó el asistente y nadie revisó sus precios: el PDF lo
+     * dice arriba, antes de las líneas, para que nadie lo tome como oferta firme.
+     */
+    private static String marcarPreliminar(String html) {
+        String aviso = """
+            <table style="margin:0 0 12pt; border:1pt solid #e0b84c; background:#fff8e1"><tr>
+              <td style="padding:8pt 10pt; font-size:9pt; color:#5c4400">
+                <b>Cotización preliminar.</b> Fue preparada por nuestro asistente y aún debe ser
+                revisada y aprobada por un agente de ventas. Precios, existencias y condiciones
+                pueden cambiar hasta su confirmación.
+              </td>
+            </tr></table>
+            """;
+        return html.replace("<h1>COTIZACIÓN</h1>", "<h1>COTIZACIÓN PRELIMINAR</h1>")
+                   .replace("<table class=\"lineas\">", aviso + "<table class=\"lineas\">");
+    }
+
+    private static boolean esProspecto(Quote q) {
+        return "prospecto".equalsIgnoreCase(q.getStatus());
+    }
+
     private String xhtml(Quote q, String empresa, String nit, String color) {
         StringBuilder filas = new StringBuilder();
         for (QuoteItem i : q.getItems()) {
@@ -86,7 +118,7 @@ public class QuotePdfService {
         String fecha = (q.getQuoteDate() == null ? LocalDate.now() : q.getQuoteDate()).format(FECHA);
         String vence = q.getValidUntil() == null ? "—" : q.getValidUntil().format(FECHA);
 
-        return """
+        String html = """
             <?xml version="1.0" encoding="UTF-8"?>
             <html xmlns="http://www.w3.org/1999/xhtml">
             <head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
@@ -163,6 +195,7 @@ public class QuotePdfService {
                 bloque("Condiciones de pago", q.getPaymentTerms()),
                 bloque("Notas", q.getNotes()),
                 esc(empresa), nit.isBlank() ? "" : " · NIT " + esc(nit));
+        return esProspecto(q) ? marcarPreliminar(html) : html;
     }
 
     private static String td(String v, String alineacion, boolean negrita) {

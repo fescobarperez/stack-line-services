@@ -337,6 +337,14 @@ public class QuoteService {
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
     }
 
+    /** Anota en la bitácora sin tocar el estado ni nada más de la cotización. */
+    public void addNote(Long id, QuoteDtos.NoteRequest req) {
+        Long companyId = tenant.getCompanyId();
+        quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        history.save(new QuoteHistory(companyId, id, req.note(), req.actor()));
+    }
+
     private void validateExpirationBeforeClientDelivery(Quote quote) {
         if (!"client".equalsIgnoreCase(quote.getPartyType())) return;
 
