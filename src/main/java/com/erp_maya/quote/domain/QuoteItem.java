@@ -57,6 +57,27 @@ public class QuoteItem {
     @Column(name = "line_total", nullable = false)
     private BigDecimal lineTotal;
 
+    /** La medida que pide el cliente; nace igual a la del catálogo. */
+    private BigDecimal height;
+    private BigDecimal width;
+    private BigDecimal depth;
+
+    /** Copia de la medida del catálogo al cotizar: contra qué se compara. */
+    @Column(name = "base_height")
+    private BigDecimal baseHeight;
+    @Column(name = "base_width")
+    private BigDecimal baseWidth;
+    @Column(name = "base_depth")
+    private BigDecimal baseDepth;
+
+    /** Con precio global: la línea interna (p. ej. materiales) no sale en el PDF. */
+    @Column(name = "show_to_client", nullable = false)
+    private Boolean showToClient = Boolean.TRUE;
+
+    /** null (catálogo/asesor) · 'calculated' (por medida) · 'review' (fuera de tolerancia). */
+    @Column(name = "size_pricing")
+    private String sizePricing;
+
     public String getItemName() { return itemName; }
     public void setItemName(String itemName) { this.itemName = itemName; }
 
@@ -90,6 +111,22 @@ public class QuoteItem {
     public BigDecimal getDiscount() { return discount; }
     public void setDiscount(BigDecimal discount) { this.discount = discount; }
 
+    public BigDecimal getHeight() { return height; }
+    public void setHeight(BigDecimal height) { this.height = height; }
+    public BigDecimal getWidth() { return width; }
+    public void setWidth(BigDecimal width) { this.width = width; }
+    public BigDecimal getDepth() { return depth; }
+    public void setDepth(BigDecimal depth) { this.depth = depth; }
+    public BigDecimal getBaseHeight() { return baseHeight; }
+    public void setBaseHeight(BigDecimal baseHeight) { this.baseHeight = baseHeight; }
+    public BigDecimal getBaseWidth() { return baseWidth; }
+    public void setBaseWidth(BigDecimal baseWidth) { this.baseWidth = baseWidth; }
+    public BigDecimal getBaseDepth() { return baseDepth; }
+    public void setBaseDepth(BigDecimal baseDepth) { this.baseDepth = baseDepth; }
+    public String getSizePricing() { return sizePricing; }
+    public void setSizePricing(String sizePricing) { this.sizePricing = sizePricing; }
+    public Boolean getShowToClient() { return showToClient; }
+    public void setShowToClient(Boolean showToClient) { this.showToClient = showToClient; }
     public BigDecimal getLineTotal() { return lineTotal; }
     public void setLineTotal(BigDecimal lineTotal) { this.lineTotal = lineTotal; }
 }

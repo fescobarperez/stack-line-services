@@ -290,7 +290,7 @@ public class QuoteChangeRequestService {
             }
             actualizada = quoteService.update(quoteId, new QuoteDtos.UpdateRequest(
                     q.getValidUntil(), q.getNotes(), q.getProfitCalcType(), q.getProfitValue(),
-                    lineas.stream().map(Linea::request).toList()));
+                    lineas.stream().map(Linea::request).toList(), null, null));
         } else {
             actualizada = quoteService.get(quoteId);
         }
@@ -378,7 +378,8 @@ public class QuoteChangeRequestService {
                 q.getId(), q.getDocNumber(), q.getClientName(), dinero(actualizada.total()),
                 // Si viene una versión nueva, no se manda el PDF de la que quedó a medias.
                 nuevaVersion ? null : "/api/quotes/" + q.getId() + "/pdf", resultados,
-                pedirDecision, nuevaVersion, q.getSentVersion());
+                pedirDecision, nuevaVersion, q.getSentVersion(),
+                q.getValidUntil() == null ? null : q.getValidUntil().toString());
         QuoteNotification n = new QuoteNotification();
         n.setCompanyId(q.getCompanyId());
         n.setQuoteId(q.getId());
@@ -487,7 +488,8 @@ public class QuoteChangeRequestService {
         }
 
         QuoteDtos.UpdateItemRequest request() {
-            return new QuoteDtos.UpdateItemRequest(id, description, quantity, unitPrice, discount, productId, uom);
+            // Sin medidas: el servicio conserva las que tenga la línea.
+            return new QuoteDtos.UpdateItemRequest(id, description, quantity, unitPrice, discount, productId, uom, null, null);
         }
     }
 }

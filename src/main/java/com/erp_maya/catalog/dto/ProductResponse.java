@@ -22,7 +22,11 @@ public record ProductResponse(
         Boolean tracksStock,
         BigDecimal minStock,
         String status,
-        List<SupplierCostResponse> suppliers
+        List<SupplierCostResponse> suppliers,
+        BigDecimal height,
+        BigDecimal width,
+        BigDecimal depth,
+        String dimensionUnit
 ) {
 
     @Serdeable

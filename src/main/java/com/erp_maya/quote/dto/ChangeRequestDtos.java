@@ -70,5 +70,7 @@ public final class ChangeRequestDtos {
                                         boolean askDecision,
                                         /** Estaba 'enviada' y cambió: volvió a borrador y viene una versión nueva. */
                                         boolean newVersionPending,
-                                        int version) {}
+                                        int version,
+                                        /** Vigencia (yyyy-MM-dd) para el pie del mensaje con botones. */
+                                        String validUntil) {}
 }

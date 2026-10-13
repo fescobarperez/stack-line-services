@@ -4,6 +4,7 @@ import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
 import com.erp_maya.project.domain.ProjectMaterial;
 import com.erp_maya.project.repository.ProjectMaterialRepositories.Materials;
+import com.erp_maya.settings.repository.CompanySettingRepository;
 import com.erp_maya.quote.domain.ChargeCategory;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteCharge;
@@ -38,11 +39,23 @@ public class QuoteChargeService {
     private final QuoteRepository quotes;
     private final Materials materials;
     private final TenantContext tenant;
+    private final CompanySettingRepository settings;
+
+    /**
+     * Base de la ganancia porcentual (company_settings quotes.profit_base):
+     * costo total = subtotal + gastos + cargos (como siempre); costo directo =
+     * solo el subtotal, para quien suma maquinaria, traslados y ganancia como
+     * porcentajes del mismo costo, sin encadenarlos.
+     */
+    public static final String BASE_COSTO_TOTAL = "total_cost";
+    public static final String BASE_COSTO_DIRECTO = "direct_cost";
     private final TaxService taxService;
 
     public QuoteChargeService(QuoteChargeRepository charges, ChargeCategoryRepository categories,
                               QuoteRepository quotes,
-                              Materials materials, TenantContext tenant, TaxService taxService) {
+                              Materials materials, TenantContext tenant, TaxService taxService,
+                              CompanySettingRepository settings) {
+        this.settings = settings;
         this.charges = charges;
         this.categories = categories;
         this.quotes = quotes;
@@ -320,6 +333,41 @@ public class QuoteChargeService {
      * Orden: materiales (derivado) + fixed = subtotal de costo; luego los
      * percent sobre ese subtotal; total = subtotal + percent.
      */
+    /** Paso de redondeo del total (quotes.rounding_step): 0 = sin redondeo. */
+    private BigDecimal pasoRedondeo(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.rounding_step")
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && v.trim().matches("\\d{1,5}(\\.\\d{1,2})?"))
+                .map(v -> new BigDecimal(v.trim()))
+                .orElse(BigDecimal.ZERO);
+    }
+
+    /** down (hacia abajo, por defecto) · nearest (al más cercano) · up (hacia arriba). */
+    private String modoRedondeo(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.rounding_mode")
+                .map(c -> c.getSettingValue() == null ? "" : c.getSettingValue().trim().toLowerCase())
+                .filter(v -> v.equals("nearest") || v.equals("up"))
+                .orElse("down");
+    }
+
+    /** Redondea `valor` al múltiplo de `paso` según el modo. */
+    static BigDecimal redondear(BigDecimal valor, BigDecimal paso, String modo) {
+        RoundingMode rm = switch (modo) {
+            case "up" -> RoundingMode.CEILING;
+            case "nearest" -> RoundingMode.HALF_UP;
+            default -> RoundingMode.FLOOR;
+        };
+        return valor.divide(paso, 0, rm).multiply(paso).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String baseGanancia(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.profit_base")
+                .map(c -> c.getSettingValue())
+                .filter(v -> BASE_COSTO_DIRECTO.equalsIgnoreCase(v == null ? "" : v.trim()))
+                .map(v -> BASE_COSTO_DIRECTO)
+                .orElse(BASE_COSTO_TOTAL);
+    }
+
     private QuoteChargeDtos.Summary recompute(Long quoteId, Long companyId) {
         var quote = quotes.findByIdAndCompanyId(quoteId, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
@@ -372,8 +420,10 @@ public class QuoteChargeService {
         BigDecimal operatingCost = money(subtotalCost.add(otherCharges));
         String profitCalcType = "percent".equals(quote.getProfitCalcType()) ? "percent" : "fixed";
         BigDecimal profitValue = money(quote.getProfitValue());
+        String profitBaseMode = baseGanancia(companyId);
+        BigDecimal profitBase = BASE_COSTO_DIRECTO.equals(profitBaseMode) ? subtotal : operatingCost;
         BigDecimal profitAmount = "percent".equals(profitCalcType)
-                ? money(operatingCost.multiply(profitValue).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
+                ? money(profitBase.multiply(profitValue).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
                 : profitValue;
         BigDecimal taxableSubtotal = money(operatingCost.add(profitAmount));
         // El ajuste de cierre entra ANTES del IVA: el impuesto se calcula sobre
@@ -386,6 +436,22 @@ public class QuoteChargeService {
         BigDecimal tax = money(adjustedBase.multiply(taxRate)
                 .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
         BigDecimal total = money(adjustedBase.add(tax));
+
+        // Redondeo automático del TOTAL (quotes.rounding_step / _mode): lo que
+        // ve el cliente queda redondo (Q 8,995.50 → Q 8,995). La base y el IVA
+        // se recalculan desde el total redondeado para que sigan cuadrando.
+        BigDecimal roundingAdjustment = BigDecimal.ZERO;
+        BigDecimal paso = pasoRedondeo(companyId);
+        if (paso.signum() > 0 && total.signum() > 0) {
+            BigDecimal redondo = redondear(total, paso, modoRedondeo(companyId));
+            if (redondo.compareTo(total) != 0) {
+                roundingAdjustment = money(redondo.subtract(total));
+                BigDecimal divisor = BigDecimal.ONE.add(taxRate.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
+                adjustedBase = money(redondo.divide(divisor, 4, RoundingMode.HALF_UP));
+                tax = money(redondo.subtract(adjustedBase));
+                total = money(redondo);
+            }
+        }
 
         quote.setProfitCalcType(profitCalcType);
         quote.setProfitValue(profitValue);
@@ -413,7 +479,7 @@ public class QuoteChargeService {
                 money(quote.getOperatingExpensePct()), money(subtotal), money(otherCharges),
                 subtotalCost, money(percentTotal), operatingCost, profitCalcType, profitValue,
                 profitAmount, taxableSubtotal, manualAdjustment, adjustedBase,
-                taxRate, tax, total, out);
+                taxRate, tax, total, out, money(profitBase), profitBaseMode, roundingAdjustment);
     }
 
     private boolean esOperativo(QuoteCharge c, Map<Long, ChargeCategory> catalogo) {

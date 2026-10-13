@@ -20,6 +20,11 @@ public record ProductRequest(
         BigDecimal minStock,
         String status,
         Long supplierId,
-        BigDecimal supplierCost
+        BigDecimal supplierCost,
+        /** Medida estándar (opcional) y su unidad; m si no se indica. */
+        BigDecimal height,
+        BigDecimal width,
+        BigDecimal depth,
+        String dimensionUnit
 ) {
 }

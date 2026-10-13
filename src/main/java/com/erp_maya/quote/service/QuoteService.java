@@ -1,6 +1,7 @@
 package com.erp_maya.quote.service;
 
 import com.erp_maya.catalog.domain.Product;
+import com.erp_maya.settings.repository.CompanySettingRepository;
 import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
@@ -53,6 +54,11 @@ public class QuoteService {
     private final DocumentSequenceService sequences;
     private final QuoteNotificationRepository avisos;
     private final ObjectMapper json;
+    private final CompanySettingRepository settings;
+
+    /** Presentación de precios al cliente. */
+    public static final String PRECIO_DETALLADO = "detailed";
+    public static final String PRECIO_GLOBAL = "global";
 
     /** Canal por el que entró la conversación cuando la cotización la armó el asistente. */
     private static final String CANAL_WHATSAPP = "whatsapp";
@@ -71,7 +77,9 @@ public class QuoteService {
                         ClientRepository clients, Projects projects, ProjectQuoteRepository projectQuotes,
                         Materials projectMaterials, TenantContext tenant, TaxService taxService,
                         QuoteChargeService quoteCharges, QuotePlanService paymentPlans,
-                        DocumentSequenceService sequences, QuoteNotificationRepository avisos, ObjectMapper json) {
+                        DocumentSequenceService sequences, QuoteNotificationRepository avisos, ObjectMapper json,
+                        CompanySettingRepository settings) {
+        this.settings = settings;
         this.sequences = sequences;
         this.avisos = avisos;
         this.json = json;
@@ -131,21 +139,34 @@ public class QuoteService {
         quote.setSupplierEmail(req.supplierEmail());
         quote.setSupplierContact(req.supplierContact());
         LocalDate quoteDate = req.quoteDate() != null ? req.quoteDate() : LocalDate.now();
-        if (!rfq && req.validUntil() == null) {
-            throw new IllegalStateException("Una cotización a cliente necesita fecha de expiración");
-        }
-        if (!rfq && req.validUntil().isBefore(quoteDate)) {
+        // Sin fecha de expiración (p. ej. las del asistente): la vigencia por
+        // defecto de la empresa en días (quotes.validity_days).
+        LocalDate validUntil = req.validUntil() != null || rfq
+                ? req.validUntil() : quoteDate.plusDays(diasVigencia(companyId));
+        if (!rfq && validUntil.isBefore(quoteDate)) {
             throw new IllegalStateException("La fecha de expiración no puede ser anterior a la fecha de cotización");
         }
         quote.setQuoteDate(quoteDate);
-        quote.setValidUntil(req.validUntil());
+        quote.setValidUntil(validUntil);
         quote.setDeadline(req.deadline());
         quote.setLeadTime(req.leadTime());
         quote.setPaymentTerms(req.paymentTerms());
+        quote.setPriceDisplay(presentacion(req.priceDisplay())
+                .orElseGet(() -> presentacionDeEmpresa(companyId)));
+        quote.setDeliveryAddress(direccion(req.deliveryAddress()));
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
-        quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
-        quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
+        // Sin ganancia en la petición (p. ej. las que arma el asistente): la
+        // sugerida de la empresa (quotes.default_profit_pct), editable después.
+        BigDecimal sugerida = req.profitValue() == null && req.profitCalcType() == null
+                ? gananciaSugerida(companyId) : null;
+        if (sugerida != null) {
+            quote.setProfitCalcType("percent");
+            quote.setProfitValue(sugerida);
+        } else {
+            quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
+            quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
+        }
         // Lo que crea el asistente nace 'abierta': la arma con el cliente y
         // pasa a prospecto cuando el cliente la da por terminada.
         boolean deAgente = !rfq && ORIGEN_AGENTE.equalsIgnoreCase(req.origin());
@@ -170,7 +191,6 @@ public class QuoteService {
             BigDecimal unitPrice = ir.unitPrice() != null ? ir.unitPrice() : BigDecimal.ZERO;
             BigDecimal discount = ir.discount() != null ? ir.discount() : BigDecimal.ZERO; // % de descuento
             BigDecimal factor = BigDecimal.ONE.subtract(discount.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
-            BigDecimal lineTotal = unitPrice.multiply(ir.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
             QuoteItem item = new QuoteItem();
             if (ir.productId() != null) {
                 Product product = products.findByIdAndCompanyId(ir.productId(), companyId)
@@ -179,6 +199,10 @@ public class QuoteService {
             }
             item.setItemName(ir.itemName());
             item.setUom(ir.uom());
+            aplicarMedidas(item, ir.dimensions(), true);
+            unitPrice = precioConMedidas(item, unitPrice, true, companyId);
+            BigDecimal lineTotal = unitPrice.multiply(ir.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
+            item.setShowToClient(ir.showToClient() == null || ir.showToClient());
             item.setQuantity(ir.quantity());
             item.setUnitPrice(unitPrice);
             item.setDiscount(discount);
@@ -212,6 +236,10 @@ public class QuoteService {
         }
         history.save(new QuoteHistory(companyId, saved.getId(),
                 rfq ? "Solicitud de cotización creada" : "Cotización creada y anclada al proyecto", req.createdBy()));
+        // Ganancia, cargos y redondeo desde el principio: sin esto la cotización
+        // nacía con precio × cantidad + IVA y el total cambiaba al abrir el panel
+        // de cargos (el asistente le daba al cliente una cifra y el PDF otra).
+        if (!rfq) quoteCharges.getSummary(saved.getId());
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
     }
 
@@ -237,6 +265,8 @@ public class QuoteService {
 
         quote.setValidUntil(req.validUntil());
         quote.setNotes(req.notes());
+        presentacion(req.priceDisplay()).ifPresent(quote::setPriceDisplay);
+        if (req.deliveryAddress() != null) quote.setDeliveryAddress(direccion(req.deliveryAddress()));
         quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
         quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
 
@@ -276,9 +306,18 @@ public class QuoteService {
                 throw new IllegalStateException("Precio y descuento deben ser valores válidos");
             }
             BigDecimal factor = BigDecimal.ONE.subtract(discount.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
-            BigDecimal lineTotal = unitPrice.multiply(itemReq.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
             item.setItemName(itemReq.description());
             item.setDescription(itemReq.description());
+            BigDecimal[] medidaAntes = {item.getHeight(), item.getWidth(), item.getDepth()};
+            aplicarMedidas(item, itemReq.dimensions(), itemReq.id() == null);
+            // Se recalcula solo si la medida cambió en esta petición: un precio
+            // que el asesor escribió a mano sobre la misma medida se respeta.
+            boolean medidaCambio = itemReq.id() == null
+                    || distinta(medidaAntes[0], item.getHeight()) || distinta(medidaAntes[1], item.getWidth())
+                    || distinta(medidaAntes[2], item.getDepth());
+            unitPrice = precioConMedidas(item, unitPrice, medidaCambio, companyId);
+            BigDecimal lineTotal = unitPrice.multiply(itemReq.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
+            if (itemReq.showToClient() != null) item.setShowToClient(itemReq.showToClient());
             item.setQuantity(itemReq.quantity());
             item.setUnitPrice(unitPrice);
             item.setDiscount(discount);
@@ -395,7 +434,8 @@ public class QuoteService {
         var payload = new QuoteDtos.QuoteSentPayload(q.getId(), q.getDocNumber(), q.getClientName(),
                 "Q " + new java.text.DecimalFormat("#,##0.00", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.US))
                         .format((q.getTotal() == null ? BigDecimal.ZERO : q.getTotal()).setScale(2, RoundingMode.HALF_UP)),
-                "/api/quotes/" + q.getId() + "/pdf", q.getSentVersion(), reenvio);
+                "/api/quotes/" + q.getId() + "/pdf", q.getSentVersion(), reenvio,
+                q.getValidUntil() == null ? null : q.getValidUntil().toString());
         QuoteNotification n = new QuoteNotification();
         n.setCompanyId(q.getCompanyId());
         n.setQuoteId(q.getId());
@@ -649,12 +689,184 @@ public class QuoteService {
         return Optional.of(clients.save(c));
     }
 
+    /** 'detailed' o 'global' si viene uno válido; vacío si no viene. */
+    static Optional<String> presentacion(String valor) {
+        if (valor == null || valor.isBlank()) return Optional.empty();
+        String v = valor.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!PRECIO_DETALLADO.equals(v) && !PRECIO_GLOBAL.equals(v)) {
+            throw new IllegalStateException("Presentación de precios inválida: " + valor + " (detailed o global)");
+        }
+        return Optional.of(v);
+    }
+
+    /** Parte fija por defecto del precio por medida (mano de obra, herrajes). */
+    public static final BigDecimal MEDIDA_FIJO_DEFECTO = new BigDecimal("30");
+    /** Tolerancia por defecto: cuánto puede salirse una medida del catálogo. */
+    public static final BigDecimal MEDIDA_TOLERANCIA_DEFECTO = new BigDecimal("25");
+
+    /**
+     * Precio de una línea con medida especial (Configuración → Cotizaciones):
+     *   precio = base × (fijo% + (1 − fijo%) × volumen pedido / volumen catálogo)
+     * Solo si la medida cambió en esta petición y difiere del catálogo; si no,
+     * se queda el precio pedido (el del catálogo o el que puso el asesor). Si
+     * alguna medida se sale más de la tolerancia, la línea queda en 0 y marcada
+     * 'review' para que el asesor la cotice.
+     */
+    BigDecimal precioConMedidas(QuoteItem item, BigDecimal precioPedido, boolean medidaCambio, Long companyId) {
+        if (!medidaCambio) return precioPedido;
+        if (!medidaEspecial(item)) {
+            item.setSizePricing(null);
+            return precioPedido;
+        }
+        Product p = item.getProduct();
+        BigDecimal base = p != null ? p.getPrice() : null;
+        PrecioMedida r = calcularPorMedida(base,
+                new BigDecimal[]{item.getBaseHeight(), item.getBaseWidth(), item.getBaseDepth()},
+                new BigDecimal[]{item.getHeight(), item.getWidth(), item.getDepth()},
+                porcentaje(companyId, "quotes.size_fixed_pct", MEDIDA_FIJO_DEFECTO),
+                porcentaje(companyId, "quotes.size_tolerance_pct", MEDIDA_TOLERANCIA_DEFECTO));
+        item.setSizePricing(r.estado());
+        return r.precio();
+    }
+
+    /** Resultado del cálculo por medida: precio y 'calculated' o 'review'. */
+    record PrecioMedida(BigDecimal precio, String estado) {}
+
+    static PrecioMedida calcularPorMedida(BigDecimal base, BigDecimal[] catalogo, BigDecimal[] pedida,
+                                         BigDecimal fijoPct, BigDecimal toleranciaPct) {
+        if (base == null || base.signum() <= 0) return new PrecioMedida(BigDecimal.ZERO, "review");
+        BigDecimal volBase = BigDecimal.ONE;
+        BigDecimal volPedido = BigDecimal.ONE;
+        BigDecimal desvio = BigDecimal.ZERO;
+        int usadas = 0;
+        for (int k = 0; k < 3; k++) {
+            BigDecimal b = catalogo[k];
+            BigDecimal v = pedida[k];
+            // Solo se comparan las medidas que existen en los dos lados.
+            if (b == null || v == null || b.signum() <= 0) continue;
+            usadas++;
+            volBase = volBase.multiply(b);
+            volPedido = volPedido.multiply(v);
+            BigDecimal d = v.subtract(b).abs().divide(b, 6, RoundingMode.HALF_UP);
+            if (d.compareTo(desvio) > 0) desvio = d;
+        }
+        if (usadas == 0) return new PrecioMedida(BigDecimal.ZERO, "review");
+        if (desvio.compareTo(toleranciaPct.movePointLeft(2)) > 0) return new PrecioMedida(BigDecimal.ZERO, "review");
+        BigDecimal fijo = fijoPct.movePointLeft(2);
+        BigDecimal factor = fijo.add(BigDecimal.ONE.subtract(fijo)
+                .multiply(volPedido.divide(volBase, 6, RoundingMode.HALF_UP)));
+        return new PrecioMedida(base.multiply(factor).setScale(2, RoundingMode.HALF_UP), "calculated");
+    }
+
+    private BigDecimal porcentaje(Long companyId, String clave, BigDecimal porDefecto) {
+        return settings.findByCompanyIdAndSettingKey(companyId, clave)
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && v.trim().matches("\\d{1,3}(\\.\\d{1,2})?"))
+                .map(v -> new BigDecimal(v.trim()))
+                .filter(v -> v.compareTo(new BigDecimal("100")) <= 0)
+                .orElse(porDefecto);
+    }
+
+    /** Vacía → null; máximo 300 caracteres (la columna). */
+    static String direccion(String v) {
+        if (v == null || v.isBlank()) return null;
+        String limpia = v.trim();
+        if (limpia.length() > 300) throw new IllegalStateException("La dirección de entrega no puede pasar de 300 caracteres");
+        return limpia;
+    }
+
+    /** Vigencia por defecto si la empresa no la configuró. */
+    public static final int VIGENCIA_DEFECTO_DIAS = 15;
+
+    /** Días de vigencia de la empresa (quotes.validity_days) o 15. */
+    public int diasVigencia(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.validity_days")
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && v.trim().matches("\\d{1,4}") && Integer.parseInt(v.trim()) > 0)
+                .map(v -> Integer.parseInt(v.trim()))
+                .orElse(VIGENCIA_DEFECTO_DIAS);
+    }
+
+    /** % de ganancia sugerido de la empresa (quotes.default_profit_pct), o null si no hay. */
+    private BigDecimal gananciaSugerida(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.default_profit_pct")
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && !v.isBlank())
+                .flatMap(v -> {
+                    try {
+                        BigDecimal pct = new BigDecimal(v.trim());
+                        return pct.signum() >= 0 ? Optional.of(pct) : Optional.empty();
+                    } catch (NumberFormatException e) {
+                        return Optional.empty();
+                    }
+                })
+                .orElse(null);
+    }
+
+    /** El de la empresa (quotes.price_display) o detallado. */
+    private String presentacionDeEmpresa(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.price_display")
+                .map(s -> s.getSettingValue())
+                .filter(v -> PRECIO_GLOBAL.equalsIgnoreCase(v == null ? "" : v.trim()))
+                .map(v -> PRECIO_GLOBAL)
+                .orElse(PRECIO_DETALLADO);
+    }
+
+    /**
+     * Medidas de la línea. Una línea nueva copia la medida del catálogo como
+     * base y, si no le piden otra, como medida pedida. En una existente, sin
+     * medidas en la petición se conservan las que tiene.
+     */
+    static void aplicarMedidas(QuoteItem item, QuoteDtos.Dimensions pedida, boolean nueva) {
+        Product p = item.getProduct();
+        if (nueva && p != null) {
+            item.setBaseHeight(p.getHeight());
+            item.setBaseWidth(p.getWidth());
+            item.setBaseDepth(p.getDepth());
+        }
+        if (pedida != null && !pedida.vacia()) {
+            item.setHeight(positiva(pedida.height(), "alto"));
+            item.setWidth(positiva(pedida.width(), "ancho"));
+            item.setDepth(positiva(pedida.depth(), "profundidad"));
+        } else if (nueva) {
+            item.setHeight(item.getBaseHeight());
+            item.setWidth(item.getBaseWidth());
+            item.setDepth(item.getBaseDepth());
+        }
+    }
+
+    private static BigDecimal positiva(BigDecimal v, String nombre) {
+        if (v != null && v.signum() <= 0) throw new IllegalStateException("El " + nombre + " debe ser mayor que cero");
+        return v;
+    }
+
+    private static QuoteDtos.Dimensions dimensiones(BigDecimal h, BigDecimal w, BigDecimal d) {
+        return h == null && w == null && d == null ? null : new QuoteDtos.Dimensions(h, w, d);
+    }
+
+    /** Medida especial: hay base y alguna medida pedida difiere de ella. */
+    static boolean medidaEspecial(QuoteItem i) {
+        boolean hayBase = i.getBaseHeight() != null || i.getBaseWidth() != null || i.getBaseDepth() != null;
+        return hayBase && (distinta(i.getHeight(), i.getBaseHeight())
+                || distinta(i.getWidth(), i.getBaseWidth())
+                || distinta(i.getDepth(), i.getBaseDepth()));
+    }
+
+    private static boolean distinta(BigDecimal a, BigDecimal b) {
+        if (a == null || b == null) return a != b;
+        return a.compareTo(b) != 0;
+    }
+
     private static QuoteDtos.Response toResponse(Quote q, List<QuoteHistory> hist) {
         var items = q.getItems().stream().map(i -> new QuoteDtos.ItemResponse(
                 i.getId(), i.getProduct() != null ? i.getProduct().getId() : null,
                 i.getProduct() != null ? i.getProduct().getName()
                         : (i.getDescription() != null && !i.getDescription().isBlank() ? i.getDescription() : i.getItemName()),
-                i.getUom(), i.getQuantity(), i.getUnitPrice(), i.getDiscount(), i.getLineTotal())).toList();
+                i.getUom(), i.getQuantity(), i.getUnitPrice(), i.getDiscount(), i.getLineTotal(),
+                dimensiones(i.getHeight(), i.getWidth(), i.getDepth()),
+                dimensiones(i.getBaseHeight(), i.getBaseWidth(), i.getBaseDepth()),
+                i.getProduct() != null && i.getProduct().getDimensionUnit() != null ? i.getProduct().getDimensionUnit() : "m",
+                medidaEspecial(i), !Boolean.FALSE.equals(i.getShowToClient()), i.getSizePricing())).toList();
         var historyOut = hist.stream().map(h -> new QuoteDtos.HistoryEntry(
                 h.getId(), h.getAction(), h.getActor(), h.getCreatedAt())).toList();
         return new QuoteDtos.Response(q.getId(), q.getDocNumber(), q.getPartyType(),
@@ -669,7 +881,8 @@ public class QuoteService {
                 items, historyOut,
                 q.getOrigin(), q.getChannel(), q.getConversationRef(),
                 q.getTakenBy(), q.getTakenAt(),
-                q.getSentVersion(), q.getClientReasonCode(), q.getClientReasonNote());
+                q.getSentVersion(), q.getClientReasonCode(), q.getClientReasonNote(),
+                q.getPriceDisplay(), q.getDeliveryAddress());
     }
 
     /** Estados en los que el documento todavía se arma y se puede editar. */
