@@ -17,7 +17,20 @@ public final class QuoteDtos {
     /** Renglón. productId opcional: si no viene, se usa itemName (texto libre). */
     @Serdeable
     public record ItemRequest(Long productId, String itemName, String uom,
-                              @NotNull BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount) {}
+                              @NotNull BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount,
+                              /** Medida pedida; sin ella, la del catálogo. */
+                              Dimensions dimensions,
+                              /** Con precio global, si la línea sale en el PDF (sí por defecto). */
+                              Boolean showToClient) {}
+
+    /**
+     * Alto × ancho × profundidad. En una línea es la medida que pide el
+     * cliente; cualquiera puede venir vacía (un panel no tiene profundidad).
+     */
+    @Serdeable
+    public record Dimensions(BigDecimal height, BigDecimal width, BigDecimal depth) {
+        public boolean vacia() { return height == null && width == null && depth == null; }
+    }
 
     @Serdeable
     public record Request(String docNumber, String partyType,
@@ -29,7 +42,11 @@ public final class QuoteDtos {
                           String profitCalcType, BigDecimal profitValue,
                           @NotEmpty @Valid List<ItemRequest> items,
                           // Solo el asistente los manda; con origin="agente" nace como 'prospecto'.
-                          String origin, String channel, String conversationRef) {}
+                          String origin, String channel, String conversationRef,
+                          /** 'detailed' | 'global'; sin él, el de la empresa (quotes.price_display). */
+                          String priceDisplay,
+                          /** Dirección de entrega / instalación. */
+                          String deliveryAddress) {}
 
     @Serdeable
     /**
@@ -38,16 +55,31 @@ public final class QuoteDtos {
      */
     public record UpdateItemRequest(Long id, String description,
                                     @NotNull BigDecimal quantity, BigDecimal unitPrice, BigDecimal discount,
-                                    Long productId, String uom) {}
+                                    Long productId, String uom,
+                                    /** null = se conservan las que tiene (o las del catálogo si es nueva). */
+                                    Dimensions dimensions,
+                                    /** null = se conserva (sí si es nueva). */
+                                    Boolean showToClient) {}
 
     @Serdeable
     public record UpdateRequest(LocalDate validUntil, String notes,
                                 String profitCalcType, BigDecimal profitValue,
-                                @NotEmpty @Valid List<UpdateItemRequest> items) {}
+                                @NotEmpty @Valid List<UpdateItemRequest> items,
+                                /** null = se conserva la presentación que tiene. */
+                                String priceDisplay,
+                                /** null = se conserva; vacía = se borra. */
+                                String deliveryAddress) {}
 
     @Serdeable
     public record ItemResponse(Long id, Long productId, String productName, String uom, BigDecimal quantity,
-                               BigDecimal unitPrice, BigDecimal discount, BigDecimal lineTotal) {}
+                               BigDecimal unitPrice, BigDecimal discount, BigDecimal lineTotal,
+                               /** Medida pedida, la del catálogo al cotizar y su unidad. */
+                               Dimensions dimensions, Dimensions baseDimensions, String dimensionUnit,
+                               /** La pedida difiere de la del catálogo. */
+                               boolean customSize,
+                               boolean showToClient,
+                               /** null · 'calculated' (precio por medida) · 'review' (lo cotiza el asesor). */
+                               String sizePricing) {}
 
     @Serdeable
     public record HistoryEntry(Long id, String action, String actor, Instant timestamp) {}
@@ -65,7 +97,8 @@ public final class QuoteDtos {
                            List<ItemResponse> items, List<HistoryEntry> history,
                            String origin, String channel, String conversationRef,
                            String takenBy, Instant takenAt,
-                           int sentVersion, String clientReasonCode, String clientReasonNote) {}
+                           int sentVersion, String clientReasonCode, String clientReasonNote,
+                           String priceDisplay, String deliveryAddress) {}
 
     /** Resumen para el asistente: en qué va cada cotización del cliente. */
     @Serdeable
@@ -79,7 +112,9 @@ public final class QuoteDtos {
                                    /** La versión enviada: va en los botones de decisión. */
                                    int version,
                                    /** Reenvío manual de la misma versión (el texto lo dice). */
-                                   boolean resend) {}
+                                   boolean resend,
+                                   /** Vigencia (yyyy-MM-dd) para el pie del mensaje con botones. */
+                                   String validUntil) {}
 
     /**
      * Decisión del cliente (la registra el asistente). {@code version} es la

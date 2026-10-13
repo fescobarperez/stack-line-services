@@ -66,16 +66,22 @@ public class ProductService {
         boolean hasType = itemType != null && !itemType.isBlank();
         Page<Product> page;
         if (hasType && hasSearch) {
-            page = products.findByCompanyIdAndItemTypeAndNameContainsIgnoreCase(
-                    companyId, itemType, search.trim(), pageable);
+            page = products.buscarPorTipo(companyId, itemType, patron(search), pageable);
         } else if (hasType) {
             page = products.findByCompanyIdAndItemType(companyId, itemType, pageable);
         } else if (hasSearch) {
-            page = products.findByCompanyIdAndNameContainsIgnoreCase(companyId, search.trim(), pageable);
+            page = products.buscar(companyId, patron(search), pageable);
         } else {
             page = products.findByCompanyId(companyId, pageable);
         }
         return page.map(this::toResponse);
+    }
+
+    /** «Pérgola» → «%pergola%»: minúsculas, sin tildes y sin comodines del usuario. */
+    static String patron(String search) {
+        String sinTildes = java.text.Normalizer.normalize(search.trim().toLowerCase(java.util.Locale.ROOT),
+                java.text.Normalizer.Form.NFD).replaceAll("\\p{M}+", "");
+        return "%" + sinTildes.replace("%", "").replace("_", "") + "%";
     }
 
     @Transactional
@@ -293,6 +299,19 @@ public class ProductService {
                 ? req.purchaseFactor() : BigDecimal.ONE);
         p.setStatus(req.status() != null ? req.status() : "active");
         p.setCategory(resolveCategory(req.categoryId()));
+        p.setHeight(medida(req.height(), "alto"));
+        p.setWidth(medida(req.width(), "ancho"));
+        p.setDepth(medida(req.depth(), "profundidad"));
+        boolean conMedidas = p.getHeight() != null || p.getWidth() != null || p.getDepth() != null;
+        p.setDimensionUnit(!conMedidas ? null
+                : req.dimensionUnit() == null || req.dimensionUnit().isBlank() ? "m" : req.dimensionUnit().trim());
+    }
+
+    /** Medida opcional: vacía es "sin medida"; cero o negativa no tiene sentido. */
+    private static BigDecimal medida(BigDecimal valor, String nombre) {
+        if (valor == null) return null;
+        if (valor.signum() <= 0) throw new IllegalStateException("El " + nombre + " debe ser mayor que cero");
+        return valor;
     }
 
     private void syncSupplier(Product product, ProductRequest req, boolean creating) {
@@ -357,7 +376,8 @@ public class ProductService {
                 c != null ? c.getName() : null,
                 p.getPrice(), p.getCost(), p.getAvgCost(),
                 p.getUnit(), p.getPurchaseUnit(), p.getPurchaseFactor(),
-                p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus(), supplierCosts
+                p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus(), supplierCosts,
+                p.getHeight(), p.getWidth(), p.getDepth(), p.getDimensionUnit()
         );
     }
 

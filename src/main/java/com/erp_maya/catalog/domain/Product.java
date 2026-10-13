@@ -56,6 +56,14 @@ public class Product {
     @Column(name = "min_stock")
     private BigDecimal minStock;
 
+    /** Medida estándar del catálogo (opcional): base para cotizar a medida. */
+    private BigDecimal height;
+    private BigDecimal width;
+    private BigDecimal depth;
+
+    @Column(name = "dimension_unit")
+    private String dimensionUnit;
+
     /**
      * sellable · raw_material · service. Solo `sellable` se ofrece en el POS;
      * la materia prima se consume y el servicio (mano de obra) no lleva stock.
@@ -114,6 +122,14 @@ public class Product {
     public String getUnit() { return unit; }
     public void setUnit(String unit) { this.unit = unit; }
 
+    public BigDecimal getHeight() { return height; }
+    public void setHeight(BigDecimal height) { this.height = height; }
+    public BigDecimal getWidth() { return width; }
+    public void setWidth(BigDecimal width) { this.width = width; }
+    public BigDecimal getDepth() { return depth; }
+    public void setDepth(BigDecimal depth) { this.depth = depth; }
+    public String getDimensionUnit() { return dimensionUnit; }
+    public void setDimensionUnit(String dimensionUnit) { this.dimensionUnit = dimensionUnit; }
     public BigDecimal getMinStock() { return minStock; }
     public void setMinStock(BigDecimal minStock) { this.minStock = minStock; }
 

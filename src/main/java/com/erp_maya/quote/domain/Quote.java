@@ -148,6 +148,14 @@ public class Quote {
     @Column(name = "sent_version", nullable = false)
     private int sentVersion;
 
+    /** 'detailed' (precio por línea) o 'global' (solo el total al cliente). */
+    @Column(name = "price_display", nullable = false)
+    private String priceDisplay = "detailed";
+
+    /** Dirección de entrega / instalación (sale en la tarjeta del cliente del PDF). */
+    @Column(name = "delivery_address")
+    private String deliveryAddress;
+
     @Column(name = "client_reason_code")
     private String clientReasonCode;
 
@@ -176,6 +184,10 @@ public class Quote {
 
     public Instant getUpdatedAt() { return updatedAt; }
 
+    public String getDeliveryAddress() { return deliveryAddress; }
+    public void setDeliveryAddress(String deliveryAddress) { this.deliveryAddress = deliveryAddress; }
+    public String getPriceDisplay() { return priceDisplay; }
+    public void setPriceDisplay(String priceDisplay) { this.priceDisplay = priceDisplay; }
     public int getSentVersion() { return sentVersion; }
     public void setSentVersion(int sentVersion) { this.sentVersion = sentVersion; }
     public String getClientReasonCode() { return clientReasonCode; }
