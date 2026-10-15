@@ -50,9 +50,13 @@ services:
       # imagen es UNA sola y la misma que se probó en staging es la que sube a
       # producción, cambiando solo cómo se arranca.
       MICRONAUT_ENVIRONMENTS: ${APP_ENV:-dev}
+      # La URL la arma el perfil (APP_ENV) con estos datos y su propio
+      # esquema: dev → stackline_dev, prod → stackline_prod.
       # DB_HOST apunta a RDS. Para volver al contenedor: DB_HOST=db y
       # levantar con --profile local-db.
-      DB_URL: jdbc:postgresql://${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-erp_maya}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-erp_maya}
       DB_USER: ${DB_USER:-erp_maya}
       DB_PASSWORD: ${DB_PASSWORD:?}
       JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET en .env}
@@ -72,7 +76,7 @@ services:
     # Tampoco se expone: solo Caddy le habla, por la red interna.
 
   # Tino, el agente de ventas (agents-services). Usa la misma base que el ERP
-  # pero en su propio esquema (`agents`): el `public` del ERP no se toca.
+  # pero en su propio esquema, según el perfil: agents_dev o agents_prod.
   # El esquema se crea UNA vez a mano antes del primer arranque (ver README).
   agents:
     build:
@@ -85,7 +89,9 @@ services:
     mem_limit: ${AGENTS_MEM_LIMIT:-768m}
     environment:
       MICRONAUT_ENVIRONMENTS: ${APP_ENV:-dev}
-      DB_URL: jdbc:postgresql://${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-erp_maya}?currentSchema=${AGENTS_DB_SCHEMA:-agents}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-erp_maya}
       DB_USER: ${DB_USER:-erp_maya}
       DB_PASSWORD: ${DB_PASSWORD:?}
       ERP_BASE_URL: http://backend:8080

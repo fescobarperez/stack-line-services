@@ -103,10 +103,12 @@ red interna y Caddy solo le reenvía `/webhooks/whatsapp`.
 cd ~/stackline
 git clone https://github.com/fescobarperez/agents-services.git
 
-# Esquema propio en la misma base (Liquibase no lo crea). Con RDS:
+# Esquemas por ambiente en la misma base (Liquibase no los crea):
+#   dev  → stackline_dev  y agents_dev
+#   prod → stackline_prod y agents_prod
 docker run --rm -it postgres:16-alpine \
   psql "host=<endpoint-rds> dbname=erp_maya user=erp_maya" \
-  -c "CREATE SCHEMA IF NOT EXISTS agents;"
+  -c "CREATE SCHEMA IF NOT EXISTS agents_dev;"
 ```
 
 Completa en `.env` la sección «Asistente comercial» (ver `.env.example`) y:
@@ -114,7 +116,7 @@ Completa en `.env` la sección «Asistente comercial» (ver `.env.example`) y:
 ```bash
 cd ~/stackline/stack-line-services/deploy
 docker compose up -d --build agents backend web
-docker compose logs -f agents      # Liquibase crea sus tablas en `agents`
+docker compose logs -f agents      # Liquibase crea sus tablas en agents_<APP_ENV>
 ```
 
 Memoria: en una máquina de 2 GB, `AGENTS_MEM_LIMIT=768m` y
