@@ -5,8 +5,9 @@
 # Reconstruir el backend son ~8 minutos en la instancia actual, así que
 # desplegar en cada push dejaría el servidor ocupado casi todo el día.
 #
-# Despliega los TRES repositorios: el servidor hace pull de stack-line-ui y
-# agents-services también, así que sus cambios se publican con este flujo.
+# Por defecto despliega solo el backend. `auto` reconstruye lo que haya
+# cambiado en los tres repos y `all` fuerza los tres; el front y el agente
+# tienen además su propio flujo, que despliega solo lo suyo.
 
 name: Deploy
 
@@ -17,8 +18,8 @@ on:
         description: "Qué reconstruir"
         type: choice
         required: true
-        default: auto
-        options: [auto, backend, web, agents, all]
+        default: backend
+        options: [backend, auto, all]
 
 # Dos despliegues a la vez sobre el mismo servidor se pisan: el segundo
 # espera a que termine el primero en vez de arrancar en paralelo.

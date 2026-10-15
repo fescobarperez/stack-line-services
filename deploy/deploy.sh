@@ -28,9 +28,17 @@ back_before=$(git -C "$SERVICES_DIR" rev-parse HEAD)
 ui_before=$(git -C "$UI_DIR" rev-parse HEAD)
 agents_before=$(git -C "$AGENTS_DIR" rev-parse HEAD)
 
+# Con un objetivo concreto solo se trae ESE repo: el workflow de cada repo
+# despliega lo suyo y nada más. auto/all traen los tres.
+# stack-line-services se trae siempre: tiene el compose y este script.
 git -C "$SERVICES_DIR" pull --ff-only -q origin main
-git -C "$UI_DIR"       pull --ff-only -q origin main
-git -C "$AGENTS_DIR"   pull --ff-only -q origin main
+case "$TARGET" in
+  web)    git -C "$UI_DIR"     pull --ff-only -q origin main ;;
+  agents) git -C "$AGENTS_DIR" pull --ff-only -q origin main ;;
+  backend) ;;
+  *)      git -C "$UI_DIR"     pull --ff-only -q origin main
+          git -C "$AGENTS_DIR" pull --ff-only -q origin main ;;
+esac
 
 back_after=$(git -C "$SERVICES_DIR" rev-parse HEAD)
 ui_after=$(git -C "$UI_DIR" rev-parse HEAD)
