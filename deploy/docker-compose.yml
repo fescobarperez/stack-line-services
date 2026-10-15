@@ -72,6 +72,12 @@ services:
       # los avisos de cotización. Misma llave que espera agents-services.
       AGENT_URL: http://agents:8081
       AGENT_KEY_ERP: ${AGENT_KEY_ERP:?define AGENT_KEY_ERP en .env}
+      # Primer dueño de la consola de plataforma (solo si aún no hay operadores).
+      PLATFORM_OWNER_EMAIL: ${PLATFORM_OWNER_EMAIL:-}
+      PLATFORM_OWNER_NAME: ${PLATFORM_OWNER_NAME:-}
+      PLATFORM_OWNER_PASSWORD: ${PLATFORM_OWNER_PASSWORD:-}
+      # URL de /activar en la app; va en los enlaces de invitación.
+      PLATFORM_ACTIVATION_URL: ${PLATFORM_ACTIVATION_URL:-}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70}
     # Tampoco se expone: solo Caddy le habla, por la red interna.
 

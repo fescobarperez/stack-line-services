@@ -12,6 +12,7 @@ import com.erp_maya.security.repository.RoleRepository;
 import com.erp_maya.security.repository.UserRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.platform.service.SubscriptionService;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
@@ -27,11 +28,14 @@ public class UserService {
     private final AuthorizationRepositories.Levels levels;
     private final AuthorizationRepositories.UserBranches userBranches;
     private final TenantContext tenant;
+    private final SubscriptionService subscription;
 
     public UserService(UserRepository users, RoleRepository roles, BranchRepository branches,
                        AuthorizationRepositories.Levels levels,
                        AuthorizationRepositories.UserBranches userBranches,
-                       PasswordEncoder passwordEncoder, TenantContext tenant) {
+                       PasswordEncoder passwordEncoder, TenantContext tenant,
+                       SubscriptionService subscription) {
+        this.subscription = subscription;
         this.users = users;
         this.roles = roles;
         this.branches = branches;
@@ -59,6 +63,10 @@ public class UserService {
         User u = new User();
         u.setCompanyId(tenant.getCompanyId());
         apply(u, req);
+        // Límite de usuarios activos del plan (409 LIMIT_REACHED).
+        if ("active".equals(u.getStatus())) {
+            subscription.checkUsers(tenant.getCompanyId());
+        }
         User saved = users.save(u);
         applyBranchScope(saved, req.branchIds());
         return toResponse(saved);
@@ -67,7 +75,11 @@ public class UserService {
     @Transactional
     public UserDtos.Response update(Long id, UserDtos.Request req) {
         User u = find(id);
+        boolean eraActivo = "active".equals(u.getStatus());
         apply(u, req);
+        if (!eraActivo && "active".equals(u.getStatus())) {
+            subscription.checkUsers(tenant.getCompanyId());
+        }
         User saved = users.update(u);
         applyBranchScope(saved, req.branchIds());
         return toResponse(saved);

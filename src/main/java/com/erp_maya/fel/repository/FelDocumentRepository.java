@@ -6,6 +6,7 @@ import io.micronaut.data.jpa.repository.JpaRepository;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 
+import java.time.Instant;
 import java.util.Optional;
 
 @Repository
@@ -14,4 +15,7 @@ public interface FelDocumentRepository extends JpaRepository<FelDocument, Long> 
     Page<FelDocument> findByCompanyIdOrderByIdDesc(Long companyId, Pageable pageable);
 
     Optional<FelDocument> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Documentos certificados desde una fecha (límite FEL del plan). */
+    long countByCompanyIdAndCertifiedAtGreaterThanEquals(Long companyId, Instant from);
 }

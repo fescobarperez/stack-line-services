@@ -9,6 +9,7 @@ import com.erp_maya.authorization.domain.AuthorizationLevel;
 import com.erp_maya.authorization.repository.AuthorizationRepositories;
 import com.erp_maya.security.dto.AuthDtos;
 import com.erp_maya.security.repository.UserRepository;
+import com.erp_maya.platform.service.SubscriptionService;
 import io.micronaut.context.annotation.Value;
 import io.micronaut.security.authentication.Authentication;
 import io.micronaut.security.token.generator.TokenGenerator;
@@ -33,13 +34,16 @@ public class AuthService {
     private final TokenGenerator tokenGenerator;
     private final AuthorizationRepositories.Levels levels;
     private final int tokenExpiration;
+    private final SubscriptionService subscriptions;
 
     public AuthService(CompanyRepository companies,
                        UserRepository users,
                        PasswordEncoder passwordEncoder,
                        TokenGenerator tokenGenerator,
                        AuthorizationRepositories.Levels levels,
-                       @Value("${erp.security.token-expiration:28800}") int tokenExpiration) {
+                       @Value("${erp.security.token-expiration:28800}") int tokenExpiration,
+                       SubscriptionService subscriptions) {
+        this.subscriptions = subscriptions;
         this.companies = companies;
         this.users = users;
         this.passwordEncoder = passwordEncoder;
@@ -86,7 +90,7 @@ public class AuthService {
                 level != null ? level.getName() : null,
                 level != null ? level.getRank() : null,
                 permissions);
-        return new AuthDtos.LoginResponse(token, info);
+        return new AuthDtos.LoginResponse(token, info, subscriptions.effective(company.getId()).modules());
     }
 
     private String generateToken(User user, Company company, Role role, List<String> permissions,

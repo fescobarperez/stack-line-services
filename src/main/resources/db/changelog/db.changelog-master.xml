@@ -108,5 +108,8 @@
     <include file="changes/076_quote_conditions.sql" relativeToChangelogFile="true"/>
     <include file="changes/077_quote_delivery_address.sql" relativeToChangelogFile="true"/>
     <include file="changes/078_quote_item_size_pricing.sql" relativeToChangelogFile="true"/>
+    <include file="changes/079_platform_operators.sql" relativeToChangelogFile="true"/>
+    <include file="changes/080_platform_companies.sql" relativeToChangelogFile="true"/>
+    <include file="changes/081_plans.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>
