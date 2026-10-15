@@ -92,6 +92,40 @@ puede validarlo y Caddy saca el certificado solo. Después: `docker compose up -
 
 ---
 
+## Agente de ventas (agents-services)
+
+Cuarto contenedor, `agents`. No publica puertos: el backend le habla por la
+red interna y Caddy solo le reenvía `/webhooks/whatsapp`.
+
+**Una sola vez**, antes del primer arranque:
+
+```bash
+cd ~/stackline
+git clone https://github.com/fescobarperez/agents-services.git
+
+# Esquema propio en la misma base (Liquibase no lo crea). Con RDS:
+docker run --rm -it postgres:16-alpine \
+  psql "host=<endpoint-rds> dbname=erp_maya user=erp_maya" \
+  -c "CREATE SCHEMA IF NOT EXISTS agents;"
+```
+
+Completa en `.env` la sección «Asistente comercial» (ver `.env.example`) y:
+
+```bash
+cd ~/stackline/stack-line-services/deploy
+docker compose up -d --build agents backend web
+docker compose logs -f agents      # Liquibase crea sus tablas en `agents`
+```
+
+Memoria: en una máquina de 2 GB, `AGENTS_MEM_LIMIT=768m` y
+`JAVA_OPTS=-XX:MaxRAMPercentage=50` para el backend. Compilar el agente
+(Kotlin) pide ~1 GB extra durante unos minutos; si la máquina no tiene swap,
+agrega 2 GB antes del primer build.
+
+WhatsApp: Meta exige HTTPS, así que el webhook solo funciona con
+`SITE_ADDRESS` en HTTPS (p. ej. `<ip-con-guiones>.sslip.io`). La URL que se
+registra en Meta es `https://<SITE_ADDRESS>/webhooks/whatsapp`.
+
 ## Publicar cambios
 
 No hay despliegue automático al hacer push: `main` puede acumular commits y

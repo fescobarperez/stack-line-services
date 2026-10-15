@@ -1,8 +1,9 @@
 # Stackline — pila de producción.
 #
-# Se asume que los dos repos están clonados como hermanos:
+# Se asume que los tres repos están clonados como hermanos:
 #   ~/stackline/stack-line-services   ← este
 #   ~/stackline/stack-line-ui
+#   ~/stackline/agents-services
 #
 # Arranque:  cd stack-line-services/deploy && docker compose up -d --build
 
@@ -63,8 +64,48 @@ services:
       ERP_SEED_COMPANY_NAME: ${SEED_COMPANY_NAME:-Stackline}
       ERP_SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?define SEED_ADMIN_EMAIL en .env}
       ERP_SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?define SEED_ADMIN_PASSWORD en .env}
+      # Asistente comercial: el ERP le reenvía /api/agent/turn y le entrega
+      # los avisos de cotización. Misma llave que espera agents-services.
+      AGENT_URL: http://agents:8081
+      AGENT_KEY_ERP: ${AGENT_KEY_ERP:?define AGENT_KEY_ERP en .env}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70}
     # Tampoco se expone: solo Caddy le habla, por la red interna.
+
+  # Tino, el agente de ventas (agents-services). Usa la misma base que el ERP
+  # pero en su propio esquema (`agents`): el `public` del ERP no se toca.
+  # El esquema se crea UNA vez a mano antes del primer arranque (ver README).
+  agents:
+    build:
+      context: ${AGENTS_CONTEXT:-../../agents-services}
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on: [backend]
+    # Tope de memoria: comparte máquina con el ERP. La JVM toma su porcentaje
+    # de este límite, no de la RAM total del servidor.
+    mem_limit: ${AGENTS_MEM_LIMIT:-768m}
+    environment:
+      MICRONAUT_ENVIRONMENTS: ${APP_ENV:-dev}
+      DB_URL: jdbc:postgresql://${DB_HOST:-db}:${DB_PORT:-5432}/${DB_NAME:-erp_maya}?currentSchema=${AGENTS_DB_SCHEMA:-agents}
+      DB_USER: ${DB_USER:-erp_maya}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      ERP_BASE_URL: http://backend:8080
+      AGENT_KEY_ERP: ${AGENT_KEY_ERP:?}
+      # Usuario bot del ERP (canales sin usuario logueado, p. ej. WhatsApp).
+      ERP_BOT_COMPANY: ${ERP_BOT_COMPANY:-}
+      ERP_BOT_EMAIL: ${ERP_BOT_EMAIL:-}
+      ERP_BOT_PASSWORD: ${ERP_BOT_PASSWORD:-}
+      # Llave del modelo. La base guarda solo el NOMBRE de la variable
+      # (ai_provider.credential_ref); el valor llega por aquí.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # WhatsApp Cloud API. Sin app-secret el webhook se rechaza entero.
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_STICKERS_ENABLED: ${WHATSAPP_STICKERS_ENABLED:-true}
+      JAVA_OPTS: ${AGENTS_JAVA_OPTS:--XX:MaxRAMPercentage=75}
+    # No publica puertos: el backend le habla por la red interna y Caddy solo
+    # le reenvía /webhooks/whatsapp (lo único que Meta necesita ver).
 
   web:
     build:
@@ -77,6 +118,7 @@ services:
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
       API_UPSTREAM: backend:8080
+      AGENT_UPSTREAM: agents:8081
     ports:
       - "80:80"
       - "443:443"
