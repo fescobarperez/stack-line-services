@@ -95,11 +95,9 @@ services:
       DB_USER: ${DB_USER:-erp_maya}
       DB_PASSWORD: ${DB_PASSWORD:?}
       ERP_BASE_URL: http://backend:8080
+      # Doble uso: el ERP la manda al llamar al agente, y el agente la manda
+      # para pedir al ERP un token por empresa (/api/internal/service-token).
       AGENT_KEY_ERP: ${AGENT_KEY_ERP:?}
-      # Usuario bot del ERP (canales sin usuario logueado, p. ej. WhatsApp).
-      ERP_BOT_COMPANY: ${ERP_BOT_COMPANY:-}
-      ERP_BOT_EMAIL: ${ERP_BOT_EMAIL:-}
-      ERP_BOT_PASSWORD: ${ERP_BOT_PASSWORD:-}
       # Llave del modelo. La base guarda solo el NOMBRE de la variable
       # (ai_provider.credential_ref); el valor llega por aquí.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

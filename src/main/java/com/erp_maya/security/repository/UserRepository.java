@@ -15,4 +15,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByIdAndCompanyId(Long id, Long companyId);
 
     Optional<User> findByCompanyIdAndEmail(Long companyId, String email);
+
+    /** Usuario de sistema «Asistente» de la empresa (ver ServiceTokenService). */
+    Optional<User> findFirstByCompanyIdAndStatus(Long companyId, String status);
 }

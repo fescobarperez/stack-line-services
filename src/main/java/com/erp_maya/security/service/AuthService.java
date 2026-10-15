@@ -52,7 +52,8 @@ public class AuthService {
     public AuthDtos.LoginResponse login(AuthDtos.LoginRequest req) {
         Company company = companies.findByCode(req.companyCode().trim())
                 .orElseThrow(() -> new InvalidCredentialsException("Empresa, usuario o contraseña inválidos."));
-        if (!"active".equals(company.getStatus())) {
+        // trial (prueba) opera igual que active; suspended y cancelled no entran.
+        if (!"active".equals(company.getStatus()) && !"trial".equals(company.getStatus())) {
             throw new InvalidCredentialsException("La empresa está suspendida. Contacta al administrador.");
         }
 

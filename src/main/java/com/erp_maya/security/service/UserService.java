@@ -43,8 +43,10 @@ public class UserService {
 
     @Transactional
     public List<UserDtos.Response> list() {
+        // El usuario de sistema del asistente no se administra desde la pantalla de usuarios.
         return users.findByCompanyId(tenant.getCompanyId())
-                .stream().map(this::toResponse).toList();
+                .stream().filter(u -> !ServiceTokenService.STATUS_SYSTEM.equals(u.getStatus()))
+                .map(this::toResponse).toList();
     }
 
     @Transactional
@@ -108,6 +110,7 @@ public class UserService {
 
     private User find(Long id) {
         return users.findByIdAndCompanyId(id, tenant.getCompanyId())
+                .filter(u -> !ServiceTokenService.STATUS_SYSTEM.equals(u.getStatus()))
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario " + id + " no encontrado"));
     }
 
