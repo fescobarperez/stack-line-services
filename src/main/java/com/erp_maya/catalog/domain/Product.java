@@ -76,6 +76,18 @@ public class Product {
 
     private String status;
 
+    /** manual · assistant (lo propuso el asistente de WhatsApp). */
+    @Column(nullable = false)
+    private String origin = ORIGIN_MANUAL;
+
+    /** NULL = producto normal · pending · discarded. Ver 082_product_review.sql. */
+    @Column(name = "review_status")
+    private String reviewStatus;
+
+    /** Lo que el asistente sabe del pedido, para quien lo revisa. */
+    @Column(name = "review_notes")
+    private String reviewNotes;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -141,6 +153,23 @@ public class Product {
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
+
+    public String getReviewStatus() { return reviewStatus; }
+    public void setReviewStatus(String reviewStatus) { this.reviewStatus = reviewStatus; }
+
+    public String getReviewNotes() { return reviewNotes; }
+    public void setReviewNotes(String reviewNotes) { this.reviewNotes = reviewNotes; }
+
+    /** Propuesto por el asistente y todavía sin revisar. */
+    public boolean isPendingReview() { return REVIEW_PENDING.equals(reviewStatus); }
+
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+
+    public static final String ORIGIN_MANUAL = "manual";
+    public static final String ORIGIN_ASSISTANT = "assistant";
+    public static final String REVIEW_PENDING = "pending";
+    public static final String REVIEW_DISCARDED = "discarded";
 }

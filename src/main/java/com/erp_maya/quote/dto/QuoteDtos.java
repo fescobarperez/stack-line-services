@@ -78,8 +78,11 @@ public final class QuoteDtos {
                                /** La pedida difiere de la del catálogo. */
                                boolean customSize,
                                boolean showToClient,
-                               /** null · 'calculated' (precio por medida) · 'review' (lo cotiza el asesor). */
-                               String sizePricing) {}
+                               /** null · 'calculated' (precio por medida) · 'review' (lo cotiza el asesor) · 'template'. */
+                               String sizePricing,
+                               String description,
+                               /** Plantilla con la que se calculó y su configuración (JSON); null = línea normal. */
+                               Long templateId, String templateConfig) {}
 
     @Serdeable
     public record HistoryEntry(Long id, String action, String actor, Instant timestamp) {}

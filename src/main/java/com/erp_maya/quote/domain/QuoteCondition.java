@@ -35,6 +35,10 @@ public class QuoteCondition {
     @Column(nullable = false)
     private Boolean active = Boolean.TRUE;
 
+    /** La define el asesor en cada cotización; body es el valor por defecto (086). */
+    @Column(name = "per_quote", nullable = false)
+    private Boolean perQuote = Boolean.FALSE;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -55,6 +59,8 @@ public class QuoteCondition {
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public Boolean getActive() { return active; }
     public void setActive(Boolean active) { this.active = active; }
+    public Boolean getPerQuote() { return perQuote; }
+    public void setPerQuote(Boolean perQuote) { this.perQuote = perQuote; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 }

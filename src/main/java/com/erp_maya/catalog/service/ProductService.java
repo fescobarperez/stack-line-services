@@ -6,6 +6,7 @@ import com.erp_maya.catalog.domain.ProductSupplier;
 import com.erp_maya.catalog.domain.ProductSupplierPrice;
 import com.erp_maya.catalog.dto.ProductRequest;
 import com.erp_maya.catalog.dto.ProductResponse;
+import com.erp_maya.catalog.dto.ProductReviewDtos;
 import com.erp_maya.catalog.dto.ProductSupplierDtos;
 import com.erp_maya.catalog.repository.CategoryRepository;
 import com.erp_maya.catalog.repository.ProductRepository;
@@ -23,6 +24,7 @@ import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 /** Lógica de negocio de productos. Todo queda acotado al inquilino actual. */
 @Singleton
@@ -61,20 +63,138 @@ public class ProductService {
      */
     @Transactional
     public Page<ProductResponse> list(String search, String itemType, Pageable pageable) {
+        return list(search, itemType, null, pageable);
+    }
+
+    /**
+     * `review` nulo = el catálogo normal (sin propuestos del asistente);
+     * `pending` o `discarded` = solo esos, para la bandeja de revisión.
+     * `itemType` nulo devuelve todo; el POS pide 'sellable'.
+     */
+    @Transactional
+    public Page<ProductResponse> list(String search, String itemType, String review, Pageable pageable) {
         Long companyId = tenant.getCompanyId();
+        if (review != null && !review.isBlank()) {
+            if (!List.of(Product.REVIEW_PENDING, Product.REVIEW_DISCARDED).contains(review)) {
+                throw new IllegalStateException("Estado de revisión no válido: " + review);
+            }
+            return products.findByCompanyIdAndReviewStatus(companyId, review, pageable).map(this::toResponse);
+        }
         boolean hasSearch = search != null && !search.isBlank();
         boolean hasType = itemType != null && !itemType.isBlank();
         Page<Product> page;
         if (hasType && hasSearch) {
             page = products.buscarPorTipo(companyId, itemType, patron(search), pageable);
         } else if (hasType) {
-            page = products.findByCompanyIdAndItemType(companyId, itemType, pageable);
+            page = products.findByCompanyIdAndItemTypeAndReviewStatusIsNull(companyId, itemType, pageable);
         } else if (hasSearch) {
             page = products.buscar(companyId, patron(search), pageable);
         } else {
-            page = products.findByCompanyId(companyId, pageable);
+            page = products.findByCompanyIdAndReviewStatusIsNull(companyId, pageable);
         }
         return page.map(this::toResponse);
+    }
+
+    @Transactional
+    public ProductReviewDtos.PendingCount pendingCount() {
+        return new ProductReviewDtos.PendingCount(
+                products.countByCompanyIdAndReviewStatus(tenant.getCompanyId(), Product.REVIEW_PENDING));
+    }
+
+    /**
+     * Producto que propone el asistente: sin precio, bajo pedido y pendiente
+     * de revisión. Si ya hay uno con el mismo nombre (en el catálogo o
+     * propuesto antes), devuelve ese en vez de duplicarlo.
+     */
+    @Transactional
+    public ProductResponse propose(ProductReviewDtos.Proposal req) {
+        Long companyId = tenant.getCompanyId();
+        String nombre = req.name().trim();
+        List<Product> iguales = products.mismoNombre(companyId, nombre);
+        // Primero el del catálogo: si existe, no hay nada que proponer.
+        Optional<Product> existente = iguales.stream().filter(x -> x.getReviewStatus() == null).findFirst()
+                .or(() -> iguales.stream().findFirst());
+        if (existente.isPresent()) {
+            return toResponse(existente.get());
+        }
+        Product p = new Product();
+        p.setCompanyId(companyId);
+        p.setSku(skuProvisional(companyId));
+        p.setName(nombre);
+        p.setItemType("sellable");
+        // Se fabrica a la medida: no lleva existencias.
+        p.setTracksStock(Boolean.FALSE);
+        p.setMinStock(BigDecimal.ZERO);
+        p.setPurchaseFactor(BigDecimal.ONE);
+        p.setUnit("Unidad");
+        p.setStatus("active");
+        p.setCategory(categoriaPorNombre(companyId, req.category()));
+        p.setHeight(medida(req.height(), "alto"));
+        p.setWidth(medida(req.width(), "ancho"));
+        p.setDepth(medida(req.depth(), "profundidad"));
+        boolean conMedidas = p.getHeight() != null || p.getWidth() != null || p.getDepth() != null;
+        p.setDimensionUnit(!conMedidas ? null
+                : req.dimensionUnit() == null || req.dimensionUnit().isBlank() ? "m" : req.dimensionUnit().trim());
+        p.setOrigin(Product.ORIGIN_ASSISTANT);
+        p.setReviewStatus(Product.REVIEW_PENDING);
+        p.setReviewNotes(req.notes() == null || req.notes().isBlank() ? null : req.notes().trim());
+        return toResponse(products.save(p));
+    }
+
+    /** Aprobar (con precio) o descartar un producto que propuso el asistente. */
+    @Transactional
+    public ProductResponse review(Long id, ProductReviewDtos.Review req) {
+        Product p = find(id);
+        if (!p.isPendingReview()) {
+            throw new IllegalStateException("El producto no está pendiente de revisión");
+        }
+        switch (req.action()) {
+            case ProductReviewDtos.Review.APPROVE -> {
+                if (req.price() == null || req.price().signum() <= 0) {
+                    throw new IllegalStateException("Para aprobarlo hay que ponerle un precio mayor que cero");
+                }
+                if (req.sku() != null && !req.sku().isBlank()) {
+                    ensureSkuAvailable(req.sku().trim(), p.getId());
+                    p.setSku(req.sku().trim());
+                }
+                if (req.categoryId() != null) {
+                    p.setCategory(resolveCategory(req.categoryId()));
+                }
+                p.setPrice(req.price());
+                p.setReviewStatus(null);
+            }
+            case ProductReviewDtos.Review.DISCARD -> p.setReviewStatus(Product.REVIEW_DISCARDED);
+            default -> throw new IllegalStateException("Acción no válida: " + req.action());
+        }
+        return toResponse(products.update(p));
+    }
+
+    /** ASIS-XXXXXX: provisional hasta que el asesor le ponga el suyo. */
+    private String skuProvisional(Long companyId) {
+        for (int intento = 0; intento < 5; intento++) {
+            String sku = "ASIS-" + Long.toString(java.util.concurrent.ThreadLocalRandom.current()
+                    .nextLong(0x1000000L, 0x10000000L), 36).toUpperCase(java.util.Locale.ROOT);
+            if (products.findBySkuAndCompanyId(sku, companyId).isEmpty()) {
+                return sku;
+            }
+        }
+        throw new IllegalStateException("No se pudo generar un SKU provisional");
+    }
+
+    /** Categoría por nombre, sin distinguir mayúsculas ni tildes; null si no existe. */
+    private Category categoriaPorNombre(Long companyId, String nombre) {
+        if (nombre == null || nombre.isBlank()) {
+            return null;
+        }
+        String buscado = normalizar(nombre);
+        return categories.findByCompanyId(companyId).stream()
+                .filter(c -> c.getName() != null && normalizar(c.getName()).equals(buscado))
+                .findFirst().orElse(null);
+    }
+
+    static String normalizar(String texto) {
+        return java.text.Normalizer.normalize(texto.trim().toLowerCase(java.util.Locale.ROOT),
+                java.text.Normalizer.Form.NFD).replaceAll("\\p{M}+", "");
     }
 
     /** «Pérgola» → «%pergola%»: minúsculas, sin tildes y sin comodines del usuario. */
@@ -377,7 +497,8 @@ public class ProductService {
                 p.getPrice(), p.getCost(), p.getAvgCost(),
                 p.getUnit(), p.getPurchaseUnit(), p.getPurchaseFactor(),
                 p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus(), supplierCosts,
-                p.getHeight(), p.getWidth(), p.getDepth(), p.getDimensionUnit()
+                p.getHeight(), p.getWidth(), p.getDepth(), p.getDimensionUnit(),
+                p.getOrigin(), p.getReviewStatus(), p.getReviewNotes(), p.getCreatedAt()
         );
     }
 

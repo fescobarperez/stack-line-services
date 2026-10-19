@@ -24,6 +24,8 @@ public class ProjectMaterialRepositories {
         List<ProjectMaterial> findByCompanyIdAndProjectIdAndQuoteIdIsNullOrderByIdAsc(Long companyId, Long projectId);
         // Materiales asignados a una cotización (para costo de línea y liberación).
         List<ProjectMaterial> findByCompanyIdAndQuoteId(Long companyId, Long quoteId);
+        // Desglose de una línea calculada con plantilla.
+        List<ProjectMaterial> findByCompanyIdAndQuoteItemId(Long companyId, Long quoteItemId);
         List<ProjectMaterial> findByCompanyIdAndProjectIdAndIdIn(Long companyId, Long projectId, List<Long> ids);
     }
 }

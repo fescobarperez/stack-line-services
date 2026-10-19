@@ -128,7 +128,7 @@ public class QuotePdfService {
         try (ByteArrayOutputStream salida = new ByteArrayOutputStream()) {
             PdfRendererBuilder b = new PdfRendererBuilder();
             b.useFastMode();
-            b.withHtmlContent(xhtml(q, empresa, resumen, materiaPrima(q, companyId), condiciones(companyId),
+            b.withHtmlContent(xhtml(q, empresa, resumen, materiaPrima(q, companyId), condiciones(companyId, q.getId()),
                     planDePago(q)), null);
             b.toStream(salida);
             b.run();
@@ -520,9 +520,10 @@ public class QuotePdfService {
         return sb.append("</table>").toString();
     }
 
-    private List<QuoteCondition> condiciones(Long companyId) {
+    /** Condiciones activas con el valor de esta cotización en las que define el asesor. */
+    private List<QuoteCondition> condiciones(Long companyId, Long quoteId) {
         try {
-            return condicionesEmpresa.activas(companyId);
+            return condicionesEmpresa.paraCotizacion(companyId, quoteId);
         } catch (RuntimeException ex) {
             log.warn("PDF sin condiciones comerciales: {}", ex.getMessage());
             return List.of();

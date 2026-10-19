@@ -55,6 +55,7 @@ public class QuoteService {
     private final QuoteNotificationRepository avisos;
     private final ObjectMapper json;
     private final CompanySettingRepository settings;
+    private final QuoteConditionService conditions;
 
     /** Presentación de precios al cliente. */
     public static final String PRECIO_DETALLADO = "detailed";
@@ -78,8 +79,9 @@ public class QuoteService {
                         Materials projectMaterials, TenantContext tenant, TaxService taxService,
                         QuoteChargeService quoteCharges, QuotePlanService paymentPlans,
                         DocumentSequenceService sequences, QuoteNotificationRepository avisos, ObjectMapper json,
-                        CompanySettingRepository settings) {
+                        CompanySettingRepository settings, QuoteConditionService conditions) {
         this.settings = settings;
+        this.conditions = conditions;
         this.sequences = sequences;
         this.avisos = avisos;
         this.json = json;
@@ -156,13 +158,14 @@ public class QuoteService {
         quote.setDeliveryAddress(direccion(req.deliveryAddress()));
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
-        // Sin ganancia en la petición (p. ej. las que arma el asistente): la
-        // sugerida de la empresa (quotes.default_profit_pct), editable después.
-        BigDecimal sugerida = req.profitValue() == null && req.profitCalcType() == null
-                ? gananciaSugerida(companyId) : null;
+        // Sin ganancia en la petición (p. ej. las que arma el asistente): la de
+        // la empresa (Configuración › Cotizaciones › Cargos por defecto, fila
+        // «Ganancia»), editable después.
+        var sugerida = req.profitValue() == null && req.profitCalcType() == null
+                ? quoteCharges.gananciaPorDefecto(companyId).orElse(null) : null;
         if (sugerida != null) {
-            quote.setProfitCalcType("percent");
-            quote.setProfitValue(sugerida);
+            quote.setProfitCalcType(sugerida.calcType());
+            quote.setProfitValue(sugerida.value());
         } else {
             quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
             quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
@@ -201,6 +204,7 @@ public class QuoteService {
             item.setUom(ir.uom());
             aplicarMedidas(item, ir.dimensions(), true);
             unitPrice = precioConMedidas(item, unitPrice, true, companyId);
+            porCotizarSiPendiente(item, unitPrice);
             BigDecimal lineTotal = unitPrice.multiply(ir.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
             item.setShowToClient(ir.showToClient() == null || ir.showToClient());
             item.setQuantity(ir.quantity());
@@ -239,7 +243,12 @@ public class QuoteService {
         // Ganancia, cargos y redondeo desde el principio: sin esto la cotización
         // nacía con precio × cantidad + IVA y el total cambiaba al abrir el panel
         // de cargos (el asistente le daba al cliente una cifra y el PDF otra).
-        if (!rfq) quoteCharges.getSummary(saved.getId());
+        // Los cargos por defecto de la empresa se copian aquí (y recalcula), y
+        // los valores por defecto de las condiciones que define el asesor.
+        if (!rfq) {
+            quoteCharges.aplicarCargosPorDefecto(saved.getId());
+            conditions.copiarACotizacion(companyId, saved.getId());
+        }
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
     }
 
@@ -316,6 +325,7 @@ public class QuoteService {
                     || distinta(medidaAntes[0], item.getHeight()) || distinta(medidaAntes[1], item.getWidth())
                     || distinta(medidaAntes[2], item.getDepth());
             unitPrice = precioConMedidas(item, unitPrice, medidaCambio, companyId);
+            porCotizarSiPendiente(item, unitPrice);
             BigDecimal lineTotal = unitPrice.multiply(itemReq.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
             if (itemReq.showToClient() != null) item.setShowToClient(itemReq.showToClient());
             item.setQuantity(itemReq.quantity());
@@ -325,8 +335,18 @@ public class QuoteService {
             subtotal = subtotal.add(lineTotal);
         }
 
+        // Una línea calculada con plantilla se lleva su desglose: esos materiales
+        // salieron del cálculo, no del pool del proyecto, y devolverlos al pool
+        // dejaría materia prima suelta que nadie pidió.
+        var calculadasQuitadas = quote.getItems().stream()
+                .filter(i -> i.getTemplateId() != null && i.getId() != null && !keptItemIds.contains(i.getId()))
+                .map(QuoteItem::getId).collect(java.util.stream.Collectors.toSet());
         for (ProjectMaterial material : projectMaterials.findByCompanyIdAndQuoteId(companyId, quote.getId())) {
             if (material.getQuoteItemId() != null && !keptItemIds.contains(material.getQuoteItemId())) {
+                if (calculadasQuitadas.contains(material.getQuoteItemId())) {
+                    projectMaterials.delete(material);
+                    continue;
+                }
                 material.setQuoteId(null);
                 material.setQuoteItemId(null);
                 projectMaterials.update(material);
@@ -713,6 +733,8 @@ public class QuoteService {
      * 'review' para que el asesor la cotice.
      */
     BigDecimal precioConMedidas(QuoteItem item, BigDecimal precioPedido, boolean medidaCambio, Long companyId) {
+        // Una línea de plantilla se recalcula con su plantilla, no por volumen.
+        if (item.getTemplateId() != null) return precioPedido;
         if (!medidaCambio) return precioPedido;
         if (!medidaEspecial(item)) {
             item.setSizePricing(null);
@@ -727,6 +749,18 @@ public class QuoteService {
                 porcentaje(companyId, "quotes.size_tolerance_pct", MEDIDA_TOLERANCIA_DEFECTO));
         item.setSizePricing(r.estado());
         return r.precio();
+    }
+
+    /**
+     * Una línea con un producto que propuso el asistente y que nadie ha
+     * revisado no tiene precio: queda «por cotizar» para que el asesor se lo
+     * ponga, igual que una medida especial fuera de rango.
+     */
+    static void porCotizarSiPendiente(QuoteItem item, BigDecimal unitPrice) {
+        Product p = item.getProduct();
+        if (p != null && p.isPendingReview() && (unitPrice == null || unitPrice.signum() == 0)) {
+            item.setSizePricing("review");
+        }
     }
 
     /** Resultado del cálculo por medida: precio y 'calculated' o 'review'. */
@@ -785,22 +819,6 @@ public class QuoteService {
                 .filter(v -> v != null && v.trim().matches("\\d{1,4}") && Integer.parseInt(v.trim()) > 0)
                 .map(v -> Integer.parseInt(v.trim()))
                 .orElse(VIGENCIA_DEFECTO_DIAS);
-    }
-
-    /** % de ganancia sugerido de la empresa (quotes.default_profit_pct), o null si no hay. */
-    private BigDecimal gananciaSugerida(Long companyId) {
-        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.default_profit_pct")
-                .map(c -> c.getSettingValue())
-                .filter(v -> v != null && !v.isBlank())
-                .flatMap(v -> {
-                    try {
-                        BigDecimal pct = new BigDecimal(v.trim());
-                        return pct.signum() >= 0 ? Optional.of(pct) : Optional.empty();
-                    } catch (NumberFormatException e) {
-                        return Optional.empty();
-                    }
-                })
-                .orElse(null);
     }
 
     /** El de la empresa (quotes.price_display) o detallado. */
@@ -866,7 +884,8 @@ public class QuoteService {
                 dimensiones(i.getHeight(), i.getWidth(), i.getDepth()),
                 dimensiones(i.getBaseHeight(), i.getBaseWidth(), i.getBaseDepth()),
                 i.getProduct() != null && i.getProduct().getDimensionUnit() != null ? i.getProduct().getDimensionUnit() : "m",
-                medidaEspecial(i), !Boolean.FALSE.equals(i.getShowToClient()), i.getSizePricing())).toList();
+                medidaEspecial(i), !Boolean.FALSE.equals(i.getShowToClient()), i.getSizePricing(),
+                i.getDescription(), i.getTemplateId(), i.getTemplateConfig())).toList();
         var historyOut = hist.stream().map(h -> new QuoteDtos.HistoryEntry(
                 h.getId(), h.getAction(), h.getActor(), h.getCreatedAt())).toList();
         return new QuoteDtos.Response(q.getId(), q.getDocNumber(), q.getPartyType(),
@@ -886,7 +905,7 @@ public class QuoteService {
     }
 
     /** Estados en los que el documento todavía se arma y se puede editar. */
-    private static boolean esEditable(String status) {
+    public static boolean esEditable(String status) {
         return ESTADO_BORRADOR.equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)
                 || ESTADO_PROSPECTO.equalsIgnoreCase(status) || ESTADO_ABIERTA.equalsIgnoreCase(status);
     }

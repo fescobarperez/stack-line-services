@@ -78,6 +78,14 @@ public class QuoteItem {
     @Column(name = "size_pricing")
     private String sizePricing;
 
+    /** Plantilla con la que se calculó la línea (084); null = línea normal. */
+    @Column(name = "template_id")
+    private Long templateId;
+
+    /** Parámetros y elecciones del cálculo en JSON, para recalcularla. */
+    @Column(name = "template_config")
+    private String templateConfig;
+
     public String getItemName() { return itemName; }
     public void setItemName(String itemName) { this.itemName = itemName; }
 
@@ -125,6 +133,10 @@ public class QuoteItem {
     public void setBaseDepth(BigDecimal baseDepth) { this.baseDepth = baseDepth; }
     public String getSizePricing() { return sizePricing; }
     public void setSizePricing(String sizePricing) { this.sizePricing = sizePricing; }
+    public Long getTemplateId() { return templateId; }
+    public void setTemplateId(Long templateId) { this.templateId = templateId; }
+    public String getTemplateConfig() { return templateConfig; }
+    public void setTemplateConfig(String templateConfig) { this.templateConfig = templateConfig; }
     public Boolean getShowToClient() { return showToClient; }
     public void setShowToClient(Boolean showToClient) { this.showToClient = showToClient; }
     public BigDecimal getLineTotal() { return lineTotal; }

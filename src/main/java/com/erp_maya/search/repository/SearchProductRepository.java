@@ -12,7 +12,7 @@ import java.util.List;
 @Repository
 public interface SearchProductRepository extends JpaRepository<Product, Long> {
 
-    @Query("SELECT p.id, p.sku, p.name, p.price FROM Product p WHERE p.companyId = :companyId "
+    @Query("SELECT p.id, p.sku, p.name, p.price FROM Product p WHERE p.companyId = :companyId AND p.reviewStatus IS NULL "
             + "AND (LOWER(p.name) LIKE :term OR LOWER(p.sku) LIKE :term) ORDER BY p.name")
     List<Object[]> search(Long companyId, String term, Pageable pageable);
 }

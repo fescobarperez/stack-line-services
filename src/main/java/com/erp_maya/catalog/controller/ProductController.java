@@ -3,6 +3,7 @@ package com.erp_maya.catalog.controller;
 import com.erp_maya.catalog.dto.ProductCategoryRequest;
 import com.erp_maya.catalog.dto.ProductRequest;
 import com.erp_maya.catalog.dto.ProductResponse;
+import com.erp_maya.catalog.dto.ProductReviewDtos;
 import com.erp_maya.catalog.dto.ProductSupplierDtos;
 import com.erp_maya.catalog.dto.SupplierPriceDtos;
 import com.erp_maya.catalog.service.ProductService;
@@ -34,11 +35,38 @@ public class ProductController {
         this.prices = prices;
     }
 
+    /**
+     * `review=pending` devuelve solo los propuestos por el asistente sin
+     * revisar; sin él, el catálogo normal (sin esos).
+     */
     @Get
     public Page<ProductResponse> list(@Nullable @QueryValue String search,
                                       @Nullable @QueryValue String itemType,
+                                      @Nullable @QueryValue String review,
                                       Pageable pageable) {
-        return service.list(search, itemType, pageable);
+        return service.list(search, itemType, review, pageable);
+    }
+
+    /** Cuántos productos propuestos por el asistente esperan revisión. */
+    @Get("/review-count")
+    public ProductReviewDtos.PendingCount reviewCount() {
+        return service.pendingCount();
+    }
+
+    /**
+     * El asistente propone un producto que no está en el catálogo. Queda sin
+     * precio y pendiente de revisión; si ya existe uno con ese nombre,
+     * devuelve ese.
+     */
+    @Post("/proposals")
+    public ProductResponse propose(@Valid @Body ProductReviewDtos.Proposal request) {
+        return service.propose(request);
+    }
+
+    /** El asesor aprueba (con precio) o descarta un producto propuesto. */
+    @Post("/{id}/review")
+    public ProductResponse review(Long id, @Valid @Body ProductReviewDtos.Review request) {
+        return service.review(id, request);
     }
 
     @Get("/{id}")

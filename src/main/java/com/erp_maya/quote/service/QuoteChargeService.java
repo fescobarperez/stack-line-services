@@ -13,14 +13,20 @@ import com.erp_maya.quote.repository.ChargeCategoryRepository;
 import com.erp_maya.quote.repository.QuoteChargeRepository;
 import com.erp_maya.quote.repository.QuoteRepository;
 import com.erp_maya.settings.service.TaxService;
+import io.micronaut.core.type.Argument;
+import io.micronaut.serde.ObjectMapper;
+import io.micronaut.serde.annotation.Serdeable;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -40,6 +46,29 @@ public class QuoteChargeService {
     private final Materials materials;
     private final TenantContext tenant;
     private final CompanySettingRepository settings;
+    private final ObjectMapper json;
+
+    /**
+     * Cargos que se copian a cada cotización nueva (Configuración ›
+     * Cotizaciones › Cargos por defecto). JSON en company_settings:
+     * [{"categoryId": 3, "description": null, "calcType": "percent", "value": 10},
+     *  {"kind": "profit", "calcType": "percent", "value": 30}].
+     * Se COPIAN al crear la cotización: cambiar la configuración no toca las
+     * que ya existen, y el asesor puede editarlos o quitarlos en cada una.
+     * La fila "profit" no es un cargo: llena la ganancia de la cotización.
+     */
+    public static final String CLAVE_CARGOS_DEFECTO = "quotes.default_charges";
+
+    @Serdeable
+    public record CargoDefecto(String kind, Long categoryId, String description, String calcType, BigDecimal value) {
+        boolean esGanancia() { return "profit".equalsIgnoreCase(kind); }
+    }
+
+    /** Ganancia con la que nace una cotización: tipo ('percent' | 'fixed') y valor. */
+    public record GananciaDefecto(String calcType, BigDecimal value) {}
+
+    /** Clave anterior de la ganancia sugerida (solo %); se lee si la lista no trae ganancia. */
+    static final String CLAVE_GANANCIA_ANTERIOR = "quotes.default_profit_pct";
 
     /**
      * Base de la ganancia porcentual (company_settings quotes.profit_base):
@@ -54,8 +83,9 @@ public class QuoteChargeService {
     public QuoteChargeService(QuoteChargeRepository charges, ChargeCategoryRepository categories,
                               QuoteRepository quotes,
                               Materials materials, TenantContext tenant, TaxService taxService,
-                              CompanySettingRepository settings) {
+                              CompanySettingRepository settings, ObjectMapper json) {
         this.settings = settings;
+        this.json = json;
         this.charges = charges;
         this.categories = categories;
         this.quotes = quotes;
@@ -69,6 +99,98 @@ public class QuoteChargeService {
         Long companyId = tenant.getCompanyId();
         requireQuote(quoteId, companyId);
         return recompute(quoteId, companyId);
+    }
+
+    /**
+     * Copia los cargos por defecto de la empresa a una cotización recién
+     * creada y recalcula. Si hay alguno, la cotización queda en modo
+     * 'detailed': en 'percent' los cargos operativos capturados no suman y los
+     * copiados no se verían en el total.
+     */
+    @Transactional
+    public QuoteChargeDtos.Summary aplicarCargosPorDefecto(Long quoteId) {
+        Long companyId = tenant.getCompanyId();
+        Quote quote = quotes.findByIdAndCompanyId(quoteId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
+        Map<Long, ChargeCategory> catalogo = categories.findByCompanyIdOrderBySortOrderAsc(companyId)
+                .stream().collect(Collectors.toMap(ChargeCategory::getId, Function.identity()));
+        Set<Long> activos = catalogo.values().stream()
+                .filter(c -> !"inactive".equalsIgnoreCase(c.getStatus()))
+                .map(ChargeCategory::getId).collect(Collectors.toSet());
+        List<CargoDefecto> copiar = aplicables(cargosPorDefecto(companyId), activos);
+        int orden = 10;
+        for (CargoDefecto d : copiar) {
+            ChargeCategory cat = catalogo.get(d.categoryId());
+            QuoteCharge c = new QuoteCharge();
+            c.setCompanyId(companyId);
+            c.setQuoteId(quoteId);
+            c.setCategoryId(cat.getId());
+            c.setDescription(d.description() != null && !d.description().isBlank() ? d.description().trim() : cat.getName());
+            c.setCalcType("percent".equalsIgnoreCase(d.calcType()) ? "percent" : "fixed");
+            c.setValue(d.value());
+            c.setSortOrder(orden++);
+            charges.save(c);
+        }
+        if (!copiar.isEmpty() && !"detailed".equals(quote.getOperatingExpenseMode())) {
+            quote.setOperatingExpenseMode("detailed");
+            quotes.update(quote);
+        }
+        return recompute(quoteId, companyId);
+    }
+
+    /**
+     * Ganancia por defecto: la fila "profit" de los cargos por defecto; si no
+     * hay, la clave anterior (quotes.default_profit_pct, en %). Vacío = la
+     * cotización nace sin ganancia sugerida.
+     */
+    public java.util.Optional<GananciaDefecto> gananciaPorDefecto(Long companyId) {
+        java.util.Optional<GananciaDefecto> deLista = ganancia(cargosPorDefecto(companyId));
+        if (deLista.isPresent()) return deLista;
+        return settings.findByCompanyIdAndSettingKey(companyId, CLAVE_GANANCIA_ANTERIOR)
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && v.trim().matches("\\d{1,4}(\\.\\d{1,4})?"))
+                .map(v -> new GananciaDefecto("percent", new BigDecimal(v.trim())));
+    }
+
+    /** La fila de ganancia válida de la lista, si hay (la primera). */
+    static java.util.Optional<GananciaDefecto> ganancia(List<CargoDefecto> lista) {
+        return lista.stream()
+                .filter(d -> d != null && d.esGanancia() && d.value() != null && d.value().signum() >= 0)
+                .filter(d -> "percent".equalsIgnoreCase(d.calcType()) || "fixed".equalsIgnoreCase(d.calcType()))
+                .findFirst()
+                .map(d -> new GananciaDefecto("percent".equalsIgnoreCase(d.calcType()) ? "percent" : "fixed", d.value()));
+    }
+
+    /** Los cargos por defecto configurados (vacío si no hay). */
+    List<CargoDefecto> cargosPorDefecto(Long companyId) {
+        String crudo = settings.findByCompanyIdAndSettingKey(companyId, CLAVE_CARGOS_DEFECTO)
+                .map(c -> c.getSettingValue()).orElse(null);
+        if (crudo == null || crudo.isBlank()) return List.of();
+        try {
+            List<CargoDefecto> lista = json.readValue(crudo, Argument.listOf(CargoDefecto.class));
+            return lista == null ? List.of() : lista;
+        } catch (IOException e) {
+            throw new IllegalStateException("Los cargos por defecto de la configuración no se pueden leer; "
+                    + "revísalos en Configuración › Cotizaciones.");
+        }
+    }
+
+    /**
+     * Los que se pueden copiar: con concepto activo, tipo válido y valor mayor
+     * que cero (un porcentaje, hasta 100). Lo demás se salta en vez de crear
+     * un cargo a medias.
+     */
+    static List<CargoDefecto> aplicables(List<CargoDefecto> lista, Set<Long> conceptosActivos) {
+        List<CargoDefecto> out = new ArrayList<>();
+        for (CargoDefecto d : lista) {
+            if (d == null || d.esGanancia() || d.categoryId() == null || !conceptosActivos.contains(d.categoryId())) continue;
+            if (d.value() == null || d.value().signum() <= 0) continue;
+            boolean pct = "percent".equalsIgnoreCase(d.calcType());
+            if (!pct && !"fixed".equalsIgnoreCase(d.calcType())) continue;
+            if (pct && d.value().compareTo(new BigDecimal("100")) > 0) continue;
+            out.add(d);
+        }
+        return out;
     }
 
     @Transactional
