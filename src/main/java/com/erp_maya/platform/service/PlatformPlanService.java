@@ -32,13 +32,16 @@ public class PlatformPlanService {
     private final CompanySubscriptionRepository subscriptions;
     private final CompanyRepository companies;
     private final SubscriptionService subscriptionService;
+    private final PlatformUsageService usageService;
 
     public PlatformPlanService(PlanRepository plans, CompanySubscriptionRepository subscriptions,
-                               CompanyRepository companies, SubscriptionService subscriptionService) {
+                               CompanyRepository companies, SubscriptionService subscriptionService,
+                               PlatformUsageService usageService) {
         this.plans = plans;
         this.subscriptions = subscriptions;
         this.companies = companies;
         this.subscriptionService = subscriptionService;
+        this.usageService = usageService;
     }
 
     public static PlanRef ref(Plan p) {
@@ -155,7 +158,7 @@ public class PlatformPlanService {
         Map<String, Integer> propios = new LinkedHashMap<>();
         SubscriptionService.limitsOf(s).forEach((k, v) -> { if (v != null) propios.put(k, v); });
         Usage usage = new Usage(subscriptionService.activeUsers(companyId), subscriptionService.activeBranches(companyId),
-                subscriptionService.felThisMonth(companyId), null);
+                subscriptionService.felThisMonth(companyId), usageService.aiTurnsThisMonth(companyId));
         return new SubscriptionView(ref(e.plan()), new Overrides(s.getEnabledModules(), s.getDisabledModules()), propios,
                 money ? s.getPriceOverride() : null,
                 new Effective(money ? e.price() : null, e.modules(), e.limits()), usage);

@@ -72,12 +72,17 @@ services:
       # los avisos de cotización. Misma llave que espera agents-services.
       AGENT_URL: http://agents:8081
       AGENT_KEY_ERP: ${AGENT_KEY_ERP:?define AGENT_KEY_ERP en .env}
+      # Consola de plataforma → modelos y agentes (/v1/admin/ai). Vacía = la
+      # consola muestra la IA como no configurada.
+      AGENT_KEY_PLATFORM: ${AGENT_KEY_PLATFORM:-}
       # Primer dueño de la consola de plataforma (solo si aún no hay operadores).
       PLATFORM_OWNER_EMAIL: ${PLATFORM_OWNER_EMAIL:-}
       PLATFORM_OWNER_NAME: ${PLATFORM_OWNER_NAME:-}
       PLATFORM_OWNER_PASSWORD: ${PLATFORM_OWNER_PASSWORD:-}
       # URL de /activar en la app; va en los enlaces de invitación.
       PLATFORM_ACTIVATION_URL: ${PLATFORM_ACTIVATION_URL:-}
+      # Tipo de cambio USD → GTQ para el margen en «Uso y costos».
+      PLATFORM_FX_USD_GTQ: ${PLATFORM_FX_USD_GTQ:-7.75}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70}
     # Tampoco se expone: solo Caddy le habla, por la red interna.
 
@@ -104,6 +109,11 @@ services:
       # Doble uso: el ERP la manda al llamar al agente, y el agente la manda
       # para pedir al ERP un token por empresa (/api/internal/service-token).
       AGENT_KEY_ERP: ${AGENT_KEY_ERP:?}
+      # Llave con scope admin para la consola de plataforma (vía el ERP).
+      AGENT_KEY_PLATFORM: ${AGENT_KEY_PLATFORM:-}
+      # Dirección pública (https://<SITE_ADDRESS>): con ella la consola arma el
+      # <script> del widget de chat web. Caddy reenvía /v1/web/* al agente.
+      AGENT_PUBLIC_URL: ${AGENT_PUBLIC_URL:-}
       # Llave del modelo. La base guarda solo el NOMBRE de la variable
       # (ai_provider.credential_ref); el valor llega por aquí.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -115,7 +125,7 @@ services:
       WHATSAPP_STICKERS_ENABLED: ${WHATSAPP_STICKERS_ENABLED:-true}
       JAVA_OPTS: ${AGENTS_JAVA_OPTS:--XX:MaxRAMPercentage=75}
     # No publica puertos: el backend le habla por la red interna y Caddy solo
-    # le reenvía /webhooks/whatsapp (lo único que Meta necesita ver).
+    # le reenvía /webhooks/whatsapp (Meta) y /v1/web/* (widget de chat web).
 
   web:
     build:

@@ -18,4 +18,7 @@ public interface FelDocumentRepository extends JpaRepository<FelDocument, Long> 
 
     /** Documentos certificados desde una fecha (límite FEL del plan). */
     long countByCompanyIdAndCertifiedAtGreaterThanEquals(Long companyId, Instant from);
+
+    /** Certificados en {@code [from, to)} (uso y costos por mes). */
+    long countByCompanyIdAndCertifiedAtGreaterThanEqualsAndCertifiedAtLessThan(Long companyId, Instant from, Instant to);
 }
