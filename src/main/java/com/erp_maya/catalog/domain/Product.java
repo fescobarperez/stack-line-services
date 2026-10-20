@@ -88,6 +88,10 @@ public class Product {
     @Column(name = "review_notes")
     private String reviewNotes;
 
+    /** Versión de la foto (ver product_images); nula si no tiene. */
+    @Column(name = "image_updated_at")
+    private Instant imageUpdatedAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -165,6 +169,8 @@ public class Product {
     /** Propuesto por el asistente y todavía sin revisar. */
     public boolean isPendingReview() { return REVIEW_PENDING.equals(reviewStatus); }
 
+    public Instant getImageUpdatedAt() { return imageUpdatedAt; }
+    public void setImageUpdatedAt(Instant imageUpdatedAt) { this.imageUpdatedAt = imageUpdatedAt; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 

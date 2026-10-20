@@ -116,5 +116,6 @@
     <include file="changes/084_product_templates.sql" relativeToChangelogFile="true"/>
     <include file="changes/085_template_materials_only.sql" relativeToChangelogFile="true"/>
     <include file="changes/086_quote_condition_values.sql" relativeToChangelogFile="true"/>
+    <include file="changes/087_product_images.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

@@ -498,7 +498,8 @@ public class ProductService {
                 p.getUnit(), p.getPurchaseUnit(), p.getPurchaseFactor(),
                 p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus(), supplierCosts,
                 p.getHeight(), p.getWidth(), p.getDepth(), p.getDimensionUnit(),
-                p.getOrigin(), p.getReviewStatus(), p.getReviewNotes(), p.getCreatedAt()
+                p.getOrigin(), p.getReviewStatus(), p.getReviewNotes(), p.getCreatedAt(),
+                p.getImageUpdatedAt() != null ? p.getImageUpdatedAt().toEpochMilli() : null
         );
     }
 

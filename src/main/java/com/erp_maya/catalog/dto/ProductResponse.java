@@ -33,7 +33,9 @@ public record ProductResponse(
         /** NULL (normal) · pending · discarded. */
         String reviewStatus,
         String reviewNotes,
-        Instant createdAt
+        Instant createdAt,
+        /** Nulo sin foto; si no, va en ?v= de GET /api/products/{id}/image. */
+        Long imageVersion
 ) {
 
     @Serdeable
