@@ -83,7 +83,18 @@ if [ ${#build[@]} -eq 0 ]; then
 else
   echo "  a reconstruir: ${build[*]}"
   say "3/4 · Construyendo y levantando"
-  docker compose up -d --build "${build[@]}"
+  # Se construye SOLO lo pedido. `up --build <servicio>` también construiría
+  # (y reiniciaría) sus depends_on: desplegar el agente o el front recompilaba
+  # el backend. Con un objetivo concreto cada repo despliega solo lo suyo:
+  # --no-deps deja el resto de contenedores tal como están.
+  docker compose build "${build[@]}"
+  if [ "$TARGET" = "auto" ]; then
+    # auto: además aplica cambios de configuración del compose a todos, con
+    # las imágenes que ya existen (no compila nada más).
+    docker compose up -d
+  else
+    docker compose up -d --no-deps "${build[@]}"
+  fi
 fi
 
 # ── Comprobar que quedó en pie ────────────────────────────────────────
