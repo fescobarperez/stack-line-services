@@ -35,6 +35,16 @@ public class ServiceTokenService {
     static final String NOMBRE_ASISTENTE = "Asistente";
     static final Set<String> ESTADOS_HABILITADOS = Set.of("active", "trial");
 
+    /**
+     * Lo que el asistente puede hacer en los módulos que validan permisos en
+     * el servidor (Salud): buscar y registrar pacientes, consultar la agenda y
+     * agendar, reprogramar, confirmar o cancelar citas. Nunca el expediente
+     * clínico ni la configuración de la agenda.
+     */
+    static final List<String> PERMISOS_ASISTENTE = List.of(
+            "patients|ver", "patients|crear",
+            "agenda|ver", "agenda|crear", "agenda|editar");
+
     private final CompanyRepository companies;
     private final UserRepository users;
     private final TokenGenerator tokenGenerator;
@@ -86,7 +96,7 @@ public class ServiceTokenService {
         attributes.put("companyName", company.getName());
         attributes.put("name", asistente.getName());
         attributes.put("kind", "service");
-        attributes.put("permissions", List.of());
+        attributes.put("permissions", PERMISOS_ASISTENTE);
 
         Authentication authentication = Authentication.build(
                 String.valueOf(asistente.getId()), List.of(), attributes);

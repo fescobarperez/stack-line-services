@@ -118,5 +118,10 @@
     <include file="changes/086_quote_condition_values.sql" relativeToChangelogFile="true"/>
     <include file="changes/087_product_images.sql" relativeToChangelogFile="true"/>
     <include file="changes/088_leads.sql" relativeToChangelogFile="true"/>
+    <include file="changes/089_salud_pacientes.sql" relativeToChangelogFile="true"/>
+    <include file="changes/090_salud_agenda.sql" relativeToChangelogFile="true"/>
+    <include file="changes/091_salud_recordatorios.sql" relativeToChangelogFile="true"/>
+    <include file="changes/092_salud_atencion.sql" relativeToChangelogFile="true"/>
+    <include file="changes/093_salud_caja.sql" relativeToChangelogFile="true"/>
 
 </databaseChangeLog>

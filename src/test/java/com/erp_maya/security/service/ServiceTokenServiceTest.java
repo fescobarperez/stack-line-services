@@ -35,4 +35,13 @@ class ServiceTokenServiceTest {
         assertFalse(ServiceTokenService.empresaHabilitada("cancelled"));
         assertFalse(ServiceTokenService.empresaHabilitada(null));
     }
+
+    @Test
+    void elAsistenteAgendaPeroNoVeElExpedienteClinico() {
+        assertTrue(ServiceTokenService.PERMISOS_ASISTENTE.contains("agenda|crear"));
+        assertTrue(ServiceTokenService.PERMISOS_ASISTENTE.contains("patients|crear"));
+        assertFalse(ServiceTokenService.PERMISOS_ASISTENTE.stream().anyMatch(p -> p.startsWith("clinical_record")));
+        assertFalse(ServiceTokenService.PERMISOS_ASISTENTE.stream().anyMatch(p -> p.startsWith("agenda_config")));
+        assertFalse(ServiceTokenService.PERMISOS_ASISTENTE.contains("*"));
+    }
 }

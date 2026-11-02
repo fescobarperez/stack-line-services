@@ -92,7 +92,8 @@ public class ClientService {
         repository.delete(find(id));
     }
 
-    private void apply(Client c, ClientDtos.Request req) {
+    /** Copia el request al cliente. Package-private y estático para probarlo sin base. */
+    static void apply(Client c, ClientDtos.Request req) {
         c.setName(req.name());
         c.setNit(req.nit());
         c.setClientType(req.clientType() != null ? req.clientType() : "CF");
@@ -101,7 +102,14 @@ public class ClientService {
         c.setEmail(req.email());
         c.setCreditLimit(req.creditLimit() != null ? req.creditLimit() : BigDecimal.ZERO);
         c.setPaymentTerms(req.paymentTerms() != null ? req.paymentTerms() : 0);
-        c.setOpeningBalance(req.openingBalance() != null ? req.openingBalance() : BigDecimal.ZERO);
+        // El saldo inicial solo cambia si viene en el request. Antes, editar un
+        // cliente sin mandarlo (la pantalla de Clientes no lo envía) lo dejaba
+        // en cero y descuadraba su saldo por cobrar (ver la 046).
+        if (req.openingBalance() != null) {
+            c.setOpeningBalance(req.openingBalance());
+        } else if (c.getOpeningBalance() == null) {
+            c.setOpeningBalance(BigDecimal.ZERO);
+        }
         c.setStatus(req.status() != null ? req.status() : "active");
     }
 

@@ -32,7 +32,8 @@ public final class ModuleCatalog {
             new Module("commercial", "Comercial", "Promociones, fidelización y cuentas por cobrar", false),
             new Module("accounting", "Contabilidad", "Contabilidad, bancos, presupuestos y activos fijos", false),
             new Module("payroll", "Planilla", "Empleados y planilla", false),
-            new Module("ai", "Asistente de IA", "Tino en el ERP y en WhatsApp", false));
+            new Module("ai", "Asistente de IA", "Tino en el ERP y en WhatsApp", false),
+            new Module("salud", "Salud", "Pacientes, agenda y expediente clínico para clínicas", false));
 
     public static final List<String> CODES = MODULES.stream().map(Module::code).toList();
 
@@ -64,7 +65,8 @@ public final class ModuleCatalog {
             Map.entry("/api/cost-centers", "accounting"),
             Map.entry("/api/employees", "payroll"),
             Map.entry("/api/payroll-periods", "payroll"),
-            Map.entry("/api/agent", "ai"));
+            Map.entry("/api/agent", "ai"),
+            Map.entry("/api/salud", "salud"));
 
     /** Módulo de una ruta, o null si es de base (siempre permitida). */
     public static @Nullable String moduleFor(String path) {

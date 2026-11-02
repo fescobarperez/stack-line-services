@@ -715,7 +715,11 @@ public class QuotePdfService {
         return "<table style=\"width:auto\"><tr><td class=\"logo\">" + img + "</td></tr></table>";
     }
 
-    private String logoIncrustado(String url) {
+    /**
+     * El logo como &lt;img&gt; incrustado y escalado (48×48), o null. Público
+     * para que otros PDF (la receta de Salud) usen el mismo logo y su caché.
+     */
+    public String logoIncrustado(String url) {
         LogoEnCache previo = logos.get(url);
         if (previo != null && previo.vence().isAfter(Instant.now())) return previo.img();
         String img = descargarLogo(url);
@@ -765,14 +769,14 @@ public class QuotePdfService {
     // ── Formato ───────────────────────────────────────────────────────────
 
     /** #rrggbb válido o el de respaldo: un color mal escrito no rompe el PDF. */
-    static String color(String valor, String porDefecto) {
+    public static String color(String valor, String porDefecto) {
         String v = valor == null ? "" : valor.trim();
         if (!v.startsWith("#")) v = "#" + v;
         return v.matches("#[0-9a-fA-F]{6}") ? v.toLowerCase(Locale.ROOT) : porDefecto;
     }
 
     /** El tinte suave del front (rgba con alfa) ya mezclado sobre blanco. */
-    static String tinte(String hex, double alfa) {
+    public static String tinte(String hex, double alfa) {
         int n = Integer.parseInt(hex.substring(1), 16);
         int[] rgb = {(n >> 16) & 255, (n >> 8) & 255, n & 255};
         StringBuilder sb = new StringBuilder("#");
