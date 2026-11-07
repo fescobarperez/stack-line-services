@@ -1,8 +1,9 @@
 # Stackline — pila de producción.
 #
-# Se asume que los dos repos están clonados como hermanos:
+# Se asume que los tres repos están clonados como hermanos:
 #   ~/stackline/stack-line-services   ← este
 #   ~/stackline/stack-line-ui
+#   ~/stackline/sites-crawler         ← runtime Python de crawling
 #
 # Arranque:  cd stack-line-services/deploy && docker compose up -d --build
 
@@ -73,7 +74,7 @@ services:
 
   crawling:
     build:
-      context: ../../stack-line-crawling
+      context: ../../sites-crawler
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
