@@ -11,12 +11,14 @@ public final class CrawlDtos {
     private CrawlDtos() {}
 
     @Serdeable
-    public record StartRequest(List<String> categoryUrls, String userPrompt, Integer maxPages) {}
+    public record StartRequest(List<String> categoryUrls, String userPrompt, Integer maxPages,
+                               String idempotencyKey) {}
 
     @Serdeable
     public record Response(Long crawlRunId, Long importBatchId, String status,
                            String qualityStatus, Integer pagesDiscovered,
                            Integer pagesVisited, Integer pagesFailed,
                            Integer productsExtracted, List<String> failedUrls,
+                           String stage, Double elapsedSeconds, Double lastHeartbeatAt,
                            Map<String, Object> qualityReport, Instant completedAt) {}
 }

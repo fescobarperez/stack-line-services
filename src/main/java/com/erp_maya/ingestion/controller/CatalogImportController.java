@@ -9,7 +9,9 @@ import io.micronaut.http.annotation.Delete;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Put;
+import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.http.annotation.Status;
+import io.micronaut.core.annotation.Nullable;
 import jakarta.validation.Valid;
 
 import java.util.List;
@@ -28,9 +30,21 @@ public class CatalogImportController {
         return service.list();
     }
 
+    @Get("/pending")
+    public List<CatalogImportDtos.PendingBatchResponse> listPending(@Nullable @QueryValue Long supplierWebsiteId) {
+        if (supplierWebsiteId == null) return List.of();
+        return service.listPending(supplierWebsiteId);
+    }
+
     @Get("/{id}")
     public CatalogImportDtos.BatchResponse get(Long id) {
         return service.get(id);
+    }
+
+    @Delete("/{id}")
+    @Status(HttpStatus.NO_CONTENT)
+    public void delete(Long id) {
+        service.delete(id);
     }
 
     @Post("/preview")
@@ -48,6 +62,12 @@ public class CatalogImportController {
     public CatalogImportDtos.BatchResponse updateDecision(Long batchId, Long itemId,
                                                             @Valid @Body CatalogImportDtos.DecisionRequest request) {
         return service.updateDecision(batchId, itemId, request);
+    }
+
+    @Put("/{id}/progress")
+    public CatalogImportDtos.BatchResponse saveProgress(Long id,
+                                                         @Valid @Body CatalogImportDtos.ProgressRequest request) {
+        return service.saveProgress(id, request);
     }
 
     @Post("/{id}/approve")

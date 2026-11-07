@@ -42,6 +42,7 @@ services:
       # `dockerfile` y rompe la configuración de build.gradle.kts.
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
+    depends_on: [crawling]
     # Sin depends_on de db: la base es RDS, que vive fuera de este compose.
     environment:
       # Qué ambiente es este servidor. Carga application-<APP_ENV>.properties
@@ -64,7 +65,27 @@ services:
       ERP_SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?define SEED_ADMIN_EMAIL en .env}
       ERP_SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?define SEED_ADMIN_PASSWORD en .env}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70}
+      CRAWLING_SERVICE_URL: ${CRAWLING_SERVICE_URL:-http://crawling:8090}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-gpt-6-luna}
+    volumes:
+      - crawlingdata:/var/lib/stackline/crawling
     # Tampoco se expone: solo Caddy le habla, por la red interna.
+
+  crawling:
+    build:
+      context: ../../stack-line-crawling
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      AI_MODE: ${AI_MODE:-real}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-gpt-6-luna}
+      AI_CHAT_BASE_URL: ${AI_CHAT_BASE_URL:-https://api.openai.com/v1/chat/completions}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CRAWL_STORAGE_ROOT: /var/lib/stackline/crawling
+    volumes:
+      - crawlingdata:/var/lib/stackline/crawling
+    expose:
+      - "8090"
 
   web:
     build:
@@ -89,3 +110,4 @@ volumes:
   pgdata:
   caddydata:
   caddyconfig:
+  crawlingdata:

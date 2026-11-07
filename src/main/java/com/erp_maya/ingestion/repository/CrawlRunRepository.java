@@ -10,5 +10,6 @@ import java.util.Optional;
 @Repository
 public interface CrawlRunRepository extends JpaRepository<CrawlRun, Long> {
     Optional<CrawlRun> findByIdAndCompanyId(Long id, Long companyId);
+    Optional<CrawlRun> findFirstByCompanyIdAndSupplierWebsiteIdAndStatusOrderByCreatedAtDesc(Long companyId, Long supplierWebsiteId, String status);
     List<CrawlRun> findByCompanyIdAndSupplierWebsiteIdOrderByCreatedAtDesc(Long companyId, Long supplierWebsiteId);
 }

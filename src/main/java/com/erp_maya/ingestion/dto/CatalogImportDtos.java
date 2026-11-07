@@ -47,8 +47,21 @@ public final class CatalogImportDtos {
                                   Long targetProductId) {}
 
     @Serdeable
-    public record BatchResponse(Long id, String sourceType, String status, int itemCount,
+    public record ProgressRequest(@NotNull @Valid List<ProgressDecision> decisions) {}
+
+    @Serdeable
+    public record ProgressDecision(@NotNull Long itemId,
+                                   @NotBlank String action,
+                                   Long targetProductId) {}
+
+    @Serdeable
+    public record BatchResponse(Long id, Long supplierId, Long supplierWebsiteId, Long crawlRunId,
+                                String sourceType, String sourceReference, String status, int itemCount,
                                 List<ItemResponse> items) {}
+
+    @Serdeable
+    public record PendingBatchResponse(Long id, Long supplierWebsiteId, Long crawlRunId,
+                                       String sourceReference, String status, int itemCount) {}
 
     @Serdeable
     public record ItemResponse(Long id, Integer rowNumber, String sourceProductName, String action, Long targetProductId,

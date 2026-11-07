@@ -72,7 +72,12 @@ public class CatalogImportService {
 
     @Transactional
     public CatalogImportDtos.BatchResponse preview(CatalogImportDtos.PreviewRequest request) {
-        Long companyId = tenant.getCompanyId();
+        return previewForCompany(tenant.getCompanyId(), request);
+    }
+
+    /** Variante para el worker del servicio Python, sin depender del TenantContext HTTP. */
+    @Transactional
+    public CatalogImportDtos.BatchResponse previewForCompany(Long companyId, CatalogImportDtos.PreviewRequest request) {
         String sourceType = request.sourceType().trim().toLowerCase(Locale.ROOT);
         if (!List.of("csv", "crawl", "mcp").contains(sourceType)) {
             throw new IllegalStateException("El origen debe ser csv, crawl o mcp");
@@ -83,7 +88,6 @@ public class CatalogImportService {
             websites.findByIdAndCompanyId(request.supplierWebsiteId(), companyId)
                     .orElseThrow(() -> new ResourceNotFoundException("Sitio del proveedor no encontrado"));
         }
-
         CatalogImportBatch batch = new CatalogImportBatch();
         batch.setCompanyId(companyId);
         batch.setSupplierId(request.supplierId());
@@ -93,7 +97,6 @@ public class CatalogImportService {
         batch.setCrawlRunId(request.crawlRunId());
         batch.setStatus("preview");
         CatalogImportBatch saved = batches.save(batch);
-
         for (int index = 0; index < request.items().size(); index++) {
             CatalogImportDtos.Row row = request.items().get(index);
             CatalogCandidateService.Decision decision = candidates.decide(companyId, row.name());
@@ -112,7 +115,25 @@ public class CatalogImportService {
             item.setStatus("pending");
             items.save(item);
         }
-        return toResponse(saved, items.findByCompanyIdAndBatchIdOrderByRowNumberAsc(companyId, saved.getId()));
+        return toResponse(saved, items.findByCompanyIdAndBatchIdOrderByRowNumberAsc(companyId, saved.getId()), companyId);
+    }
+
+    @Transactional
+    public List<CatalogImportDtos.PendingBatchResponse> listPending(Long supplierWebsiteId) {
+        Long companyId = tenant.getCompanyId();
+        return batches.findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                        companyId, supplierWebsiteId, "crawl", "preview")
+                .stream()
+                .map(batch -> {
+                    int itemCount = (int) items.findByCompanyIdAndBatchIdOrderByRowNumberAsc(companyId, batch.getId())
+                            .stream()
+                            .filter(item -> !"rejected".equals(item.getStatus()))
+                            .count();
+                    return new CatalogImportDtos.PendingBatchResponse(
+                            batch.getId(), batch.getSupplierWebsiteId(), batch.getCrawlRunId(),
+                            batch.getSourceReference(), batch.getStatus(), itemCount);
+                })
+                .toList();
     }
 
     @Transactional
@@ -123,6 +144,15 @@ public class CatalogImportService {
         return toResponse(batch, items.findByCompanyIdAndBatchIdOrderByRowNumberAsc(companyId, id));
     }
 
+    @Transactional
+    public void delete(Long id) {
+        CatalogImportBatch batch = findBatch(id);
+        if (!"preview".equals(batch.getStatus())) {
+            throw new IllegalStateException("Solo se pueden eliminar propuestas pendientes");
+        }
+        // catalog_import_items tiene ON DELETE CASCADE sobre batch_id.
+        batches.delete(batch);
+    }
 
     @Transactional
     public CatalogImportDtos.BatchResponse excludeItem(Long batchId, Long itemId) {
@@ -152,30 +182,56 @@ public class CatalogImportService {
         if (!tenant.getCompanyId().equals(item.getCompanyId()) || !batchId.equals(item.getBatchId())) {
             throw new ResourceNotFoundException("Fila de importación " + itemId + " no encontrada");
         }
+        applyDecision(batch, item, request.action(), request.targetProductId());
+        items.save(item);
+        return get(batchId);
+    }
+
+    @Transactional
+    public CatalogImportDtos.BatchResponse saveProgress(Long batchId,
+                                                         CatalogImportDtos.ProgressRequest request) {
+        CatalogImportBatch batch = findBatch(batchId);
+        List<CatalogImportItem> rows = items.findByCompanyIdAndBatchIdOrderByRowNumberAsc(
+                tenant.getCompanyId(), batchId);
+        Map<Long, CatalogImportItem> byId = new LinkedHashMap<>();
+        rows.forEach(item -> byId.put(item.getId(), item));
+        List<CatalogImportDtos.ProgressDecision> decisions = request == null || request.decisions() == null
+                ? List.of() : request.decisions();
+        for (CatalogImportDtos.ProgressDecision decision : decisions) {
+            CatalogImportItem item = byId.get(decision.itemId());
+            if (item == null) {
+                throw new ResourceNotFoundException("Fila de importación " + decision.itemId() + " no encontrada");
+            }
+            applyDecision(batch, item, decision.action(), decision.targetProductId());
+            items.save(item);
+        }
+        return get(batchId);
+    }
+
+    private void applyDecision(CatalogImportBatch batch, CatalogImportItem item,
+                               String requestedAction, Long targetProductId) {
         if (!"preview".equals(batch.getStatus()) || !"pending".equals(item.getStatus())) {
             throw new IllegalStateException("Solo se pueden editar decisiones pendientes de un lote en preview");
         }
-        String action = request.action().trim().toUpperCase(Locale.ROOT);
+        String action = requestedAction.trim().toUpperCase(Locale.ROOT);
         if (!List.of("CREATE", "LINK_EXISTING_PRODUCT", "UPDATE_OFFER", "UPDATE_PRODUCT", "REVIEW", "OMIT")
                 .contains(action)) {
             throw new IllegalStateException("Acción de importación no válida: " + action);
         }
         if (List.of("LINK_EXISTING_PRODUCT", "UPDATE_OFFER", "UPDATE_PRODUCT").contains(action)) {
-            if (request.targetProductId() == null) {
+            if (targetProductId == null) {
                 throw new IllegalStateException("La acción " + action + " necesita un producto candidato");
             }
-            productService.get(request.targetProductId());
+            productService.get(targetProductId);
         }
         if ("CREATE".equals(action) || "OMIT".equals(action) || "REVIEW".equals(action)) {
             item.setTargetProductId(null);
         } else {
-            item.setTargetProductId(request.targetProductId());
+            item.setTargetProductId(targetProductId);
         }
         item.setAction(action);
         item.setDecisionReason("Decisión ajustada manualmente desde la pre-autorización");
         item.setEvidence(Map.of("source", "user", "method", "manual_override"));
-        items.save(item);
-        return get(batchId);
     }
 
     @Transactional
@@ -443,7 +499,12 @@ public class CatalogImportService {
 
     private CatalogImportDtos.BatchResponse toResponse(CatalogImportBatch batch,
                                                         List<CatalogImportItem> rows) {
-        Long companyId = tenant.getCompanyId();
+        return toResponse(batch, rows, tenant.getCompanyId());
+    }
+
+    private CatalogImportDtos.BatchResponse toResponse(CatalogImportBatch batch,
+                                                        List<CatalogImportItem> rows,
+                                                        Long companyId) {
         List<CatalogImportDtos.ItemResponse> responseRows = rows.stream()
                 .filter(row -> !"rejected".equals(row.getStatus()))
                 .sorted(Comparator
@@ -463,7 +524,8 @@ public class CatalogImportService {
                     row.getConfidence(), row.getDecisionReason(),
                     row.getEvidence(), row.getAlternativeCandidates(), row.getStatus());
         }).toList();
-        return new CatalogImportDtos.BatchResponse(batch.getId(), batch.getSourceType(), batch.getStatus(),
-                responseRows.size(), responseRows);
+        return new CatalogImportDtos.BatchResponse(batch.getId(), batch.getSupplierId(),
+                batch.getSupplierWebsiteId(), batch.getCrawlRunId(), batch.getSourceType(),
+                batch.getSourceReference(), batch.getStatus(), responseRows.size(), responseRows);
     }
 }
