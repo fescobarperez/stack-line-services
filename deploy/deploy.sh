@@ -213,7 +213,10 @@ if [ ${#build[@]} -eq 0 ]; then
 else
   echo "  rebuilding: ${build[*]}"
   say "3/4 · Building and starting"
-  docker compose build "${build[@]}"
+  for service in "${build[@]}"; do
+    echo "  building: $service"
+    docker compose build "$service"
+  done
   case "$TARGET" in
     auto|all)
       docker compose up -d --no-build

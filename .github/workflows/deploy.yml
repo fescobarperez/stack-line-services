@@ -23,7 +23,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: produccion
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - name: Prepare SSH key
@@ -38,8 +38,10 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
+              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== largest processes ==="; ps -eo pid,ppid,%cpu,%mem,rss,etime,comm --sort=-rss | head -n 20; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
 
       - name: Stage OpenAI key
         if: inputs.target != 'inspect'
@@ -52,6 +54,8 @@ jobs:
           fi
           printf '%s\n' "$OPENAI_API_KEY" | ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
               'umask 077; dd of="$HOME/.stackline-openai-key" status=none'
 
@@ -60,6 +64,8 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
               "git -C ~/stackline/stack-line-services fetch -q origin main && git -C ~/stackline/stack-line-services show origin/main:deploy/deploy.sh | OPENAI_KEY_FILE=\$HOME/.stackline-openai-key bash -s -- ${{ inputs.target }}"
 
@@ -69,6 +75,8 @@ jobs:
           if [ -f ~/.ssh/deploy_key ]; then
             ssh -i ~/.ssh/deploy_key \
                 -o BatchMode=yes \
+                -o ServerAliveInterval=30 \
+                -o ServerAliveCountMax=10 \
                 "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
                 'rm -f -- "$HOME/.stackline-openai-key"' || true
           fi

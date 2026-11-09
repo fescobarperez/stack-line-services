@@ -163,9 +163,11 @@ ssh -i ~/.ssh/stackline.pem ubuntu@3.142.8.206 './stackline/stack-line-services/
 ```
 
 The script updates all four repositories and rebuilds only images whose source
-changed. Use `deploy.sh backend`, `deploy.sh web`, `deploy.sh agents`, or
-`deploy.sh crawling` for a targeted rollout. Use `deploy.sh all` for the first
-crawler rollout so every dependency is started from a known revision.
+changed. Image builds run sequentially so a full release stays within the memory
+budget of the current `t4g.small`. Use `deploy.sh backend`, `deploy.sh web`,
+`deploy.sh agents`, or `deploy.sh crawling` for a targeted rollout. Use
+`deploy.sh all` for the first crawler rollout so every dependency is started
+from a known revision.
 
 Verification requires the web application, authenticated API boundary, sales
 agent route, and crawler `/healthz` endpoint to respond.
