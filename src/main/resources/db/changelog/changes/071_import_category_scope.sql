@@ -1,3 +1,5 @@
+--liquibase formatted sql
+
 --changeset erp_maya:071-import-category-scope
 -- Persist the external category selection that produced each crawl proposal.
 ALTER TABLE catalog_import_batches

@@ -15,7 +15,8 @@ public final class AuthDtos {
                                @NotBlank String password) {}
 
     @Serdeable
-    public record LoginResponse(String token, UserInfo user) {}
+    /** `enabledModules`: lo que el plan de la empresa incluye; la app oculta el resto. */
+    public record LoginResponse(String token, UserInfo user, List<String> enabledModules) {}
 
     @Serdeable
     /** `authLevel*` es nulo para quien no aprueba nada: la UI oculta lo que no aplica. */

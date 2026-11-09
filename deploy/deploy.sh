@@ -1,89 +1,156 @@
 #!/usr/bin/env bash
 #
-# Despliegue de Stackline en el servidor.
+# Deploy Stackline on the application server.
 #
-#   ./deploy.sh          reconstruye solo lo que cambió
-#   ./deploy.sh backend  fuerza el backend
-#   ./deploy.sh web      fuerza el front
-#   ./deploy.sh all      fuerza ambos
-#
-# Reconstruir el backend cuesta ~8 minutos en una t4g.small, así que por
-# defecto se compara el commit antes y después del pull y solo se toca lo
-# que de verdad se movió.
+#   ./deploy.sh             rebuilds services whose source changed
+#   ./deploy.sh backend     forces the ERP backend
+#   ./deploy.sh web         forces the web application
+#   ./deploy.sh agents      forces agents-services
+#   ./deploy.sh crawling    forces the Python crawler
+#   ./deploy.sh all         forces all four services
 
 set -euo pipefail
 
 SERVICES_DIR="$HOME/stackline/stack-line-services"
 UI_DIR="$HOME/stackline/stack-line-ui"
+AGENTS_DIR="$HOME/stackline/agents-services"
+CRAWLER_DIR="$HOME/stackline/sites-crawler"
+CRAWLER_REPOSITORY="https://github.com/bragonya/sites-crawler.git"
+CRAWLER_BRANCH="feat/initial-crawling-runtime"
 DEPLOY_DIR="$SERVICES_DIR/deploy"
 TARGET="${1:-auto}"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-# ── Traer cambios ─────────────────────────────────────────────────────
-say "1/4 · Actualizando repositorios"
-back_before=$(git -C "$SERVICES_DIR" rev-parse HEAD)
+ensure_crawler_repository() {
+  if [ -d "$CRAWLER_DIR/.git" ]; then
+    return
+  fi
+  if [ -e "$CRAWLER_DIR" ]; then
+    echo "Crawler path exists but is not a Git repository: $CRAWLER_DIR" >&2
+    exit 1
+  fi
+  say "Preparing crawler repository"
+  git clone --quiet --single-branch --branch "$CRAWLER_BRANCH" \
+    "$CRAWLER_REPOSITORY" "$CRAWLER_DIR"
+}
+
+case "$TARGET" in
+  auto|backend|web|agents|crawling|all) ;;
+  *) echo "Invalid target: $TARGET (use auto|backend|web|agents|crawling|all)" >&2; exit 1 ;;
+esac
+
+# The crawler is public and can be bootstrapped without storing another deploy key.
+ensure_crawler_repository
+
+say "1/4 · Updating repositories"
+backend_before=$(git -C "$SERVICES_DIR" rev-parse HEAD)
 ui_before=$(git -C "$UI_DIR" rev-parse HEAD)
+agents_before=$(git -C "$AGENTS_DIR" rev-parse HEAD)
+crawler_before=$(git -C "$CRAWLER_DIR" rev-parse HEAD)
 
 git -C "$SERVICES_DIR" pull --ff-only -q origin main
-git -C "$UI_DIR"       pull --ff-only -q origin main
+case "$TARGET" in
+  backend) ;;
+  web)      git -C "$UI_DIR" pull --ff-only -q origin main ;;
+  agents)   git -C "$AGENTS_DIR" pull --ff-only -q origin main ;;
+  crawling) git -C "$CRAWLER_DIR" pull --ff-only -q origin "$CRAWLER_BRANCH" ;;
+  auto|all)
+    git -C "$UI_DIR" pull --ff-only -q origin main
+    git -C "$AGENTS_DIR" pull --ff-only -q origin main
+    git -C "$CRAWLER_DIR" pull --ff-only -q origin "$CRAWLER_BRANCH"
+    ;;
+esac
 
-back_after=$(git -C "$SERVICES_DIR" rev-parse HEAD)
+backend_after=$(git -C "$SERVICES_DIR" rev-parse HEAD)
 ui_after=$(git -C "$UI_DIR" rev-parse HEAD)
+agents_after=$(git -C "$AGENTS_DIR" rev-parse HEAD)
+crawler_after=$(git -C "$CRAWLER_DIR" rev-parse HEAD)
 
-printf '  backend  %s → %s\n' "${back_before:0:7}" "${back_after:0:7}"
-printf '  front    %s → %s\n' "${ui_before:0:7}" "${ui_after:0:7}"
+printf '  backend  %s -> %s\n' "${backend_before:0:7}" "${backend_after:0:7}"
+printf '  web      %s -> %s\n' "${ui_before:0:7}" "${ui_after:0:7}"
+printf '  agents   %s -> %s\n' "${agents_before:0:7}" "${agents_after:0:7}"
+printf '  crawler  %s -> %s\n' "${crawler_before:0:7}" "${crawler_after:0:7}"
 
-# ── Decidir qué reconstruir ───────────────────────────────────────────
-say "2/4 · Decidiendo qué reconstruir"
+say "2/4 · Selecting images"
 build=()
 case "$TARGET" in
-  backend) build=(backend) ;;
-  web)     build=(web) ;;
-  all)     build=(backend web) ;;
+  backend)  build=(backend) ;;
+  web)      build=(web) ;;
+  agents)   build=(agents) ;;
+  crawling) build=(crawling) ;;
+  all)      build=(backend crawling web agents) ;;
   auto)
-    # Solo importa lo que entra en la imagen. Un cambio en el README o en
-    # docker-compose.yml no justifica recompilar el jar.
-    if [ "$back_before" != "$back_after" ] && \
-       ! git -C "$SERVICES_DIR" diff --quiet "$back_before" "$back_after" -- src build.gradle.kts gradle deploy/Dockerfile; then
+    if [ "$backend_before" != "$backend_after" ] && \
+       ! git -C "$SERVICES_DIR" diff --quiet "$backend_before" "$backend_after" -- \
+         src build.gradle.kts gradle deploy/Dockerfile; then
       build+=(backend)
     fi
     if [ "$ui_before" != "$ui_after" ]; then
       build+=(web)
     fi
+    if [ "$agents_before" != "$agents_after" ] && \
+       ! git -C "$AGENTS_DIR" diff --quiet "$agents_before" "$agents_after" -- \
+         src build.gradle.kts gradle deploy/Dockerfile; then
+      build+=(agents)
+    fi
+    if [ "$crawler_before" != "$crawler_after" ] && \
+       ! git -C "$CRAWLER_DIR" diff --quiet "$crawler_before" "$crawler_after" -- \
+         stackline_crawling pyproject.toml Dockerfile; then
+      build+=(crawling)
+    fi
     ;;
-  *) echo "Objetivo no válido: $TARGET (usa auto|backend|web|all)"; exit 1 ;;
 esac
 
 cd "$DEPLOY_DIR"
+# Resolve interpolation before touching running containers. In particular,
+# production crawling must not start without OPENAI_API_KEY.
+docker compose config --quiet
 
 if [ ${#build[@]} -eq 0 ]; then
-  echo "  sin cambios que requieran reconstruir"
-  say "3/4 · Aplicando configuración"
+  echo "  no image rebuild required"
+  say "3/4 · Applying configuration"
   docker compose up -d
 else
-  echo "  a reconstruir: ${build[*]}"
-  say "3/4 · Construyendo y levantando"
-  docker compose up -d --build "${build[@]}"
+  echo "  rebuilding: ${build[*]}"
+  say "3/4 · Building and starting"
+  docker compose build "${build[@]}"
+  case "$TARGET" in
+    auto|all)
+      docker compose up -d --no-build
+      ;;
+    backend)
+      # A backend-only rollout still guarantees that its internal dependency exists.
+      docker compose up -d crawling
+      docker compose up -d --no-deps backend
+      ;;
+    *)
+      docker compose up -d --no-deps "${build[@]}"
+      ;;
+  esac
 fi
 
-# ── Comprobar que quedó en pie ────────────────────────────────────────
-say "4/4 · Verificando"
-for i in $(seq 1 40); do
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/ || true)
-  if [ "$code" = "200" ]; then
-    # El front responde aunque el backend esté caído: se comprueba también
-    # la API, que es la que depende del jar y de las migraciones.
-    api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/api/clients || true)
-    if [ "$api" = "401" ]; then
-      echo "  ✓ front y API respondiendo"
-      docker compose ps --format '  {{.Service}}  {{.Status}}'
-      exit 0
-    fi
+say "4/4 · Verifying"
+for _ in $(seq 1 40); do
+  root_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/ || true)
+  api_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/api/clients || true)
+  agent_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/webhooks/whatsapp || true)
+  crawler_ok=false
+  if docker compose exec -T crawling python -c \
+      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5).read()" \
+      >/dev/null 2>&1; then
+    crawler_ok=true
+  fi
+
+  if [ "$root_code" = "200" ] && [ "$api_code" = "401" ] && \
+     [ "${agent_code:0:1}" = "4" ] && [ "$crawler_ok" = "true" ]; then
+    echo "  Web, API, agents, and crawler are responding"
+    docker compose ps --format '  {{.Service}}  {{.Status}}'
+    exit 0
   fi
   sleep 5
 done
 
-echo "  ✗ no respondió a tiempo. Últimas líneas del backend:"
-docker compose logs backend --tail 25
+echo "Deployment verification timed out. Recent service logs:" >&2
+docker compose logs backend agents crawling --tail 30
 exit 1

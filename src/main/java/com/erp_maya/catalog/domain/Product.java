@@ -56,6 +56,14 @@ public class Product {
     @Column(name = "min_stock")
     private BigDecimal minStock;
 
+    /** Medida estándar del catálogo (opcional): base para cotizar a medida. */
+    private BigDecimal height;
+    private BigDecimal width;
+    private BigDecimal depth;
+
+    @Column(name = "dimension_unit")
+    private String dimensionUnit;
+
     /**
      * sellable · raw_material · service. Solo `sellable` se ofrece en el POS;
      * la materia prima se consume y el servicio (mano de obra) no lleva stock.
@@ -67,6 +75,22 @@ public class Product {
     private Boolean tracksStock = Boolean.TRUE;
 
     private String status;
+
+    /** manual · assistant (lo propuso el asistente de WhatsApp). */
+    @Column(nullable = false)
+    private String origin = ORIGIN_MANUAL;
+
+    /** NULL = producto normal · pending · discarded. Ver 082_product_review.sql. */
+    @Column(name = "review_status")
+    private String reviewStatus;
+
+    /** Lo que el asistente sabe del pedido, para quien lo revisa. */
+    @Column(name = "review_notes")
+    private String reviewNotes;
+
+    /** Versión de la foto (ver product_images); nula si no tiene. */
+    @Column(name = "image_updated_at")
+    private Instant imageUpdatedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
@@ -114,6 +138,14 @@ public class Product {
     public String getUnit() { return unit; }
     public void setUnit(String unit) { this.unit = unit; }
 
+    public BigDecimal getHeight() { return height; }
+    public void setHeight(BigDecimal height) { this.height = height; }
+    public BigDecimal getWidth() { return width; }
+    public void setWidth(BigDecimal width) { this.width = width; }
+    public BigDecimal getDepth() { return depth; }
+    public void setDepth(BigDecimal depth) { this.depth = depth; }
+    public String getDimensionUnit() { return dimensionUnit; }
+    public void setDimensionUnit(String dimensionUnit) { this.dimensionUnit = dimensionUnit; }
     public BigDecimal getMinStock() { return minStock; }
     public void setMinStock(BigDecimal minStock) { this.minStock = minStock; }
 
@@ -125,6 +157,25 @@ public class Product {
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
+
+    public String getReviewStatus() { return reviewStatus; }
+    public void setReviewStatus(String reviewStatus) { this.reviewStatus = reviewStatus; }
+
+    public String getReviewNotes() { return reviewNotes; }
+    public void setReviewNotes(String reviewNotes) { this.reviewNotes = reviewNotes; }
+
+    /** Propuesto por el asistente y todavía sin revisar. */
+    public boolean isPendingReview() { return REVIEW_PENDING.equals(reviewStatus); }
+
+    public Instant getImageUpdatedAt() { return imageUpdatedAt; }
+    public void setImageUpdatedAt(Instant imageUpdatedAt) { this.imageUpdatedAt = imageUpdatedAt; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+
+    public static final String ORIGIN_MANUAL = "manual";
+    public static final String ORIGIN_ASSISTANT = "assistant";
+    public static final String REVIEW_PENDING = "pending";
+    public static final String REVIEW_DISCARDED = "discarded";
 }

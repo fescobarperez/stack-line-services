@@ -48,6 +48,25 @@ public class ClientService {
                 .map(this::withBalance);
     }
 
+    /** Dígitos con los que se compara un teléfono (el número local en Guatemala). */
+    private static final int DIGITOS_TELEFONO = 8;
+
+    /**
+     * Busca por teléfono ignorando formato y código de país. Vacío si no hay
+     * ninguno o si hay más de uno con ese número: identificar a la persona
+     * equivocada es peor que preguntarle quién es.
+     */
+    @Transactional
+    public java.util.Optional<ClientDtos.Response> findByPhone(String phone) {
+        String digitos = phone == null ? "" : phone.replaceAll("[^0-9]", "");
+        if (digitos.length() < DIGITOS_TELEFONO) return java.util.Optional.empty();
+        String ultimos = digitos.substring(digitos.length() - DIGITOS_TELEFONO);
+        var encontrados = repository.findByCompanyIdAndPhoneDigits(tenant.getCompanyId(), ultimos, DIGITOS_TELEFONO);
+        return encontrados.size() == 1
+                ? java.util.Optional.of(withBalance(encontrados.get(0)))
+                : java.util.Optional.empty();
+    }
+
     @Transactional
     public ClientDtos.Response get(Long id) {
         return withBalance(find(id));
@@ -73,7 +92,8 @@ public class ClientService {
         repository.delete(find(id));
     }
 
-    private void apply(Client c, ClientDtos.Request req) {
+    /** Copia el request al cliente. Package-private y estático para probarlo sin base. */
+    static void apply(Client c, ClientDtos.Request req) {
         c.setName(req.name());
         c.setNit(req.nit());
         c.setClientType(req.clientType() != null ? req.clientType() : "CF");
@@ -82,7 +102,14 @@ public class ClientService {
         c.setEmail(req.email());
         c.setCreditLimit(req.creditLimit() != null ? req.creditLimit() : BigDecimal.ZERO);
         c.setPaymentTerms(req.paymentTerms() != null ? req.paymentTerms() : 0);
-        c.setOpeningBalance(req.openingBalance() != null ? req.openingBalance() : BigDecimal.ZERO);
+        // El saldo inicial solo cambia si viene en el request. Antes, editar un
+        // cliente sin mandarlo (la pantalla de Clientes no lo envía) lo dejaba
+        // en cero y descuadraba su saldo por cobrar (ver la 046).
+        if (req.openingBalance() != null) {
+            c.setOpeningBalance(req.openingBalance());
+        } else if (c.getOpeningBalance() == null) {
+            c.setOpeningBalance(BigDecimal.ZERO);
+        }
         c.setStatus(req.status() != null ? req.status() : "active");
     }
 

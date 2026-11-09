@@ -17,6 +17,8 @@ import com.erp_maya.quote.domain.QuoteHistory;
 import com.erp_maya.quote.domain.QuoteItem;
 import com.erp_maya.quote.repository.QuoteHistoryRepository;
 import com.erp_maya.quote.repository.QuoteRepository;
+import com.erp_maya.quote.service.QuoteChargeService;
+import com.erp_maya.quote.service.QuoteConditionService;
 import com.erp_maya.sequence.service.DocumentSequenceService;
 import com.erp_maya.settings.service.TaxService;
 import jakarta.inject.Singleton;
@@ -51,13 +53,18 @@ public class ProjectQuoteBuilderService {
     private final TenantContext tenant;
 
     private final DocumentSequenceService sequences;
+    private final QuoteChargeService quoteCharges;
+    private final QuoteConditionService conditions;
 
     public ProjectQuoteBuilderService(Projects projects, Materials materials, Groups groups,
                                       QuoteRepository quotes, QuoteHistoryRepository quoteHistory,
                                       ProjectQuoteRepository projectQuotes, ClientRepository clients,
                                       TaxService taxService, TenantContext tenant,
-                                      DocumentSequenceService sequences) {
+                                      DocumentSequenceService sequences, QuoteChargeService quoteCharges,
+                                      QuoteConditionService conditions) {
         this.sequences = sequences;
+        this.quoteCharges = quoteCharges;
+        this.conditions = conditions;
         this.projects = projects;
         this.materials = materials;
         this.groups = groups;
@@ -96,8 +103,13 @@ public class ProjectQuoteBuilderService {
         quote.setValidUntil(req.validUntil());
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
-        quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
-        quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
+        // Sin ganancia en la petición: la de la empresa (Cargos por defecto, fila «Ganancia»).
+        var sugerida = req.profitValue() == null && req.profitCalcType() == null
+                ? quoteCharges.gananciaPorDefecto(companyId).orElse(null) : null;
+        quote.setProfitCalcType(sugerida != null ? sugerida.calcType()
+                : "percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
+        quote.setProfitValue(sugerida != null ? sugerida.value()
+                : req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
         quote.setStatus("borrador");
         quote.setProjectId(projectId);
         if (project.getClientId() != null) {
@@ -181,6 +193,9 @@ public class ProjectQuoteBuilderService {
 
         quoteHistory.save(new QuoteHistory(companyId, saved.getId(),
                 "Cotización creada desde materiales del proyecto", req.createdBy()));
+        // Cargos por defecto de la empresa, igual que en cualquier cotización nueva.
+        quoteCharges.aplicarCargosPorDefecto(saved.getId());
+        conditions.copiarACotizacion(companyId, saved.getId());
         return saved.getId();
     }
 

@@ -67,7 +67,9 @@ public final class QuoteChargeDtos {
      *   otherCharges    cargos que no son de categoría operativa
      *   subtotalCost    subtotal + operatingExpenses
      *   operatingCost   subtotalCost + otherCharges · base de la ganancia
-     *   profitAmount    ganancia fija o porcentaje sobre operatingCost
+     *   profitAmount    ganancia fija o porcentaje sobre la base de ganancia:
+     *                   operatingCost ('total_cost', por defecto) o solo el
+     *                   subtotal ('direct_cost'), según quotes.profit_base
      *   taxableSubtotal operatingCost + profitAmount  (base ANTES del ajuste)
      *   adjustedBase    max(0, taxableSubtotal + manualAdjustment)
      *   tax             adjustedBase × tasa
@@ -83,5 +85,10 @@ public final class QuoteChargeDtos {
                           BigDecimal profitAmount, BigDecimal taxableSubtotal,
                           BigDecimal manualAdjustment, BigDecimal adjustedBase,
                           BigDecimal taxRate, BigDecimal tax, BigDecimal total,
-                          List<ChargeResponse> charges) {}
+                          List<ChargeResponse> charges,
+                          /** Sobre qué se calculó la ganancia porcentual y con qué modo
+                           *  ('total_cost' = operatingCost, 'direct_cost' = subtotal). */
+                          BigDecimal profitBase, String profitBaseMode,
+                          /** Lo que movió el redondeo automático del total (0 sin redondeo). */
+                          BigDecimal roundingAdjustment) {}
 }

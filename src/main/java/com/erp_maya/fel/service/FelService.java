@@ -2,6 +2,7 @@ package com.erp_maya.fel.service;
 
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.platform.service.SubscriptionService;
 import com.erp_maya.fel.domain.FelDocument;
 import com.erp_maya.fel.dto.FelDtos;
 import com.erp_maya.fel.repository.FelDocumentRepository;
@@ -26,8 +27,11 @@ public class FelService {
     private final FelDocumentRepository documents;
     private final SaleRepository sales;
     private final TenantContext tenant;
+    private final SubscriptionService subscription;
 
-    public FelService(FelDocumentRepository documents, SaleRepository sales, TenantContext tenant) {
+    public FelService(FelDocumentRepository documents, SaleRepository sales, TenantContext tenant,
+                      SubscriptionService subscription) {
+        this.subscription = subscription;
         this.documents = documents;
         this.sales = sales;
         this.tenant = tenant;
@@ -48,6 +52,8 @@ public class FelService {
     @Transactional
     public FelDtos.Response certify(FelDtos.CertifyRequest req) {
         Long companyId = tenant.getCompanyId();
+        // Límite de documentos FEL del mes del plan (409 LIMIT_REACHED).
+        subscription.checkFel(companyId);
         Sale sale = sales.findByIdAndCompanyId(req.saleId(), companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Venta " + req.saleId() + " no encontrada"));
 

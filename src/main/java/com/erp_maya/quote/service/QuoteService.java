@@ -1,6 +1,7 @@
 package com.erp_maya.quote.service;
 
 import com.erp_maya.catalog.domain.Product;
+import com.erp_maya.settings.repository.CompanySettingRepository;
 import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
@@ -20,6 +21,9 @@ import com.erp_maya.quote.domain.QuoteItem;
 import com.erp_maya.quote.dto.QuoteDtos;
 import com.erp_maya.quote.repository.QuoteHistoryRepository;
 import com.erp_maya.quote.repository.QuoteRepository;
+import com.erp_maya.quote.repository.QuoteNotificationRepository;
+import com.erp_maya.quote.domain.QuoteNotification;
+import io.micronaut.serde.ObjectMapper;
 import io.micronaut.data.model.Page;
 import io.micronaut.data.model.Pageable;
 import jakarta.inject.Singleton;
@@ -48,13 +52,39 @@ public class QuoteService {
     private final TenantContext tenant;
 
     private final DocumentSequenceService sequences;
+    private final QuoteNotificationRepository avisos;
+    private final ObjectMapper json;
+    private final CompanySettingRepository settings;
+    private final QuoteConditionService conditions;
+
+    /** Presentación de precios al cliente. */
+    public static final String PRECIO_DETALLADO = "detailed";
+    public static final String PRECIO_GLOBAL = "global";
+
+    /** Canal por el que entró la conversación cuando la cotización la armó el asistente. */
+    private static final String CANAL_WHATSAPP = "whatsapp";
+    private static final String AVISO_ENVIADA = "cotizacion_enviada";
+
+    /** Origen de las cotizaciones que crea el asistente comercial. */
+    public static final String ORIGEN_AGENTE = "agente";
+    /** Lo que el asistente arma con el cliente: solo el asistente la edita. */
+    public static final String ESTADO_ABIERTA = "abierta";
+    /** El cliente la dio por terminada; espera que un vendedor la abra. */
+    public static final String ESTADO_PROSPECTO = "prospecto";
+    /** Un vendedor la abrió: desde aquí es suya. */
+    public static final String ESTADO_BORRADOR = "borrador";
 
     public QuoteService(QuoteRepository quotes, QuoteHistoryRepository history, ProductRepository products,
                         ClientRepository clients, Projects projects, ProjectQuoteRepository projectQuotes,
                         Materials projectMaterials, TenantContext tenant, TaxService taxService,
                         QuoteChargeService quoteCharges, QuotePlanService paymentPlans,
-                        DocumentSequenceService sequences) {
+                        DocumentSequenceService sequences, QuoteNotificationRepository avisos, ObjectMapper json,
+                        CompanySettingRepository settings, QuoteConditionService conditions) {
+        this.settings = settings;
+        this.conditions = conditions;
         this.sequences = sequences;
+        this.avisos = avisos;
+        this.json = json;
         this.quotes = quotes;
         this.history = history;
         this.products = products;
@@ -71,9 +101,12 @@ public class QuoteService {
     @Transactional
     public Page<QuoteDtos.Response> list(String partyType, Pageable pageable) {
         Long companyId = tenant.getCompanyId();
+        // Las que el asistente todavía arma con el cliente no se listan: no
+        // son trabajo del vendedor hasta que el cliente las termine.
         Page<Quote> page = (partyType == null || partyType.isBlank())
-                ? quotes.findByCompanyIdOrderByQuoteDateDesc(companyId, pageable)
-                : quotes.findByCompanyIdAndPartyTypeOrderByQuoteDateDesc(companyId, partyType, pageable);
+                ? quotes.findByCompanyIdAndStatusNotEqualOrderByQuoteDateDesc(companyId, ESTADO_ABIERTA, pageable)
+                : quotes.findByCompanyIdAndPartyTypeAndStatusNotEqualOrderByQuoteDateDesc(
+                        companyId, partyType, ESTADO_ABIERTA, pageable);
         return page.map(q -> {
             if ("client".equalsIgnoreCase(q.getPartyType())) quoteCharges.getSummary(q.getId());
             return toResponse(q, List.of());
@@ -108,22 +141,42 @@ public class QuoteService {
         quote.setSupplierEmail(req.supplierEmail());
         quote.setSupplierContact(req.supplierContact());
         LocalDate quoteDate = req.quoteDate() != null ? req.quoteDate() : LocalDate.now();
-        if (!rfq && req.validUntil() == null) {
-            throw new IllegalStateException("Una cotización a cliente necesita fecha de expiración");
-        }
-        if (!rfq && req.validUntil().isBefore(quoteDate)) {
+        // Sin fecha de expiración (p. ej. las del asistente): la vigencia por
+        // defecto de la empresa en días (quotes.validity_days).
+        LocalDate validUntil = req.validUntil() != null || rfq
+                ? req.validUntil() : quoteDate.plusDays(diasVigencia(companyId));
+        if (!rfq && validUntil.isBefore(quoteDate)) {
             throw new IllegalStateException("La fecha de expiración no puede ser anterior a la fecha de cotización");
         }
         quote.setQuoteDate(quoteDate);
-        quote.setValidUntil(req.validUntil());
+        quote.setValidUntil(validUntil);
         quote.setDeadline(req.deadline());
         quote.setLeadTime(req.leadTime());
         quote.setPaymentTerms(req.paymentTerms());
+        quote.setPriceDisplay(presentacion(req.priceDisplay())
+                .orElseGet(() -> presentacionDeEmpresa(companyId)));
+        quote.setDeliveryAddress(direccion(req.deliveryAddress()));
         quote.setCreatedBy(req.createdBy());
         quote.setNotes(req.notes());
-        quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
-        quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
-        quote.setStatus(rfq ? "solicitada" : "borrador");
+        // Sin ganancia en la petición (p. ej. las que arma el asistente): la de
+        // la empresa (Configuración › Cotizaciones › Cargos por defecto, fila
+        // «Ganancia»), editable después.
+        var sugerida = req.profitValue() == null && req.profitCalcType() == null
+                ? quoteCharges.gananciaPorDefecto(companyId).orElse(null) : null;
+        if (sugerida != null) {
+            quote.setProfitCalcType(sugerida.calcType());
+            quote.setProfitValue(sugerida.value());
+        } else {
+            quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
+            quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
+        }
+        // Lo que crea el asistente nace 'abierta': la arma con el cliente y
+        // pasa a prospecto cuando el cliente la da por terminada.
+        boolean deAgente = !rfq && ORIGEN_AGENTE.equalsIgnoreCase(req.origin());
+        quote.setStatus(rfq ? "solicitada" : deAgente ? ESTADO_ABIERTA : ESTADO_BORRADOR);
+        quote.setOrigin(deAgente ? ORIGEN_AGENTE : null);
+        quote.setChannel(deAgente ? req.channel() : null);
+        quote.setConversationRef(deAgente ? req.conversationRef() : null);
         Client quoteClient = null;
         // Toda cotización a cliente queda anclada a un proyecto. RFQ no participa
         // en proyectos: sigue siendo un documento de compras independiente.
@@ -141,7 +194,6 @@ public class QuoteService {
             BigDecimal unitPrice = ir.unitPrice() != null ? ir.unitPrice() : BigDecimal.ZERO;
             BigDecimal discount = ir.discount() != null ? ir.discount() : BigDecimal.ZERO; // % de descuento
             BigDecimal factor = BigDecimal.ONE.subtract(discount.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
-            BigDecimal lineTotal = unitPrice.multiply(ir.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
             QuoteItem item = new QuoteItem();
             if (ir.productId() != null) {
                 Product product = products.findByIdAndCompanyId(ir.productId(), companyId)
@@ -150,6 +202,11 @@ public class QuoteService {
             }
             item.setItemName(ir.itemName());
             item.setUom(ir.uom());
+            aplicarMedidas(item, ir.dimensions(), true);
+            unitPrice = precioConMedidas(item, unitPrice, true, companyId);
+            porCotizarSiPendiente(item, unitPrice);
+            BigDecimal lineTotal = unitPrice.multiply(ir.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
+            item.setShowToClient(ir.showToClient() == null || ir.showToClient());
             item.setQuantity(ir.quantity());
             item.setUnitPrice(unitPrice);
             item.setDiscount(discount);
@@ -183,6 +240,15 @@ public class QuoteService {
         }
         history.save(new QuoteHistory(companyId, saved.getId(),
                 rfq ? "Solicitud de cotización creada" : "Cotización creada y anclada al proyecto", req.createdBy()));
+        // Ganancia, cargos y redondeo desde el principio: sin esto la cotización
+        // nacía con precio × cantidad + IVA y el total cambiaba al abrir el panel
+        // de cargos (el asistente le daba al cliente una cifra y el PDF otra).
+        // Los cargos por defecto de la empresa se copian aquí (y recalcula), y
+        // los valores por defecto de las condiciones que define el asesor.
+        if (!rfq) {
+            quoteCharges.aplicarCargosPorDefecto(saved.getId());
+            conditions.copiarACotizacion(companyId, saved.getId());
+        }
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
     }
 
@@ -191,8 +257,8 @@ public class QuoteService {
         Long companyId = tenant.getCompanyId();
         Quote quote = quotes.findByIdAndCompanyId(id, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
-        if (!"borrador".equalsIgnoreCase(quote.getStatus()) && !"draft".equalsIgnoreCase(quote.getStatus())) {
-            throw new IllegalStateException("Solo se pueden editar cotizaciones en borrador");
+        if (!esEditable(quote.getStatus())) {
+            throw new IllegalStateException("Solo se pueden editar cotizaciones en borrador o prospecto");
         }
 
         LocalDate quoteDate = quote.getQuoteDate() != null ? quote.getQuoteDate() : LocalDate.now();
@@ -208,17 +274,37 @@ public class QuoteService {
 
         quote.setValidUntil(req.validUntil());
         quote.setNotes(req.notes());
+        presentacion(req.priceDisplay()).ifPresent(quote::setPriceDisplay);
+        if (req.deliveryAddress() != null) quote.setDeliveryAddress(direccion(req.deliveryAddress()));
         quote.setProfitCalcType("percent".equalsIgnoreCase(req.profitCalcType()) ? "percent" : "fixed");
         quote.setProfitValue(req.profitValue() != null ? req.profitValue() : BigDecimal.ZERO);
 
         var itemsById = quote.getItems().stream()
                 .collect(java.util.stream.Collectors.toMap(QuoteItem::getId, java.util.function.Function.identity()));
         var keptItemIds = new java.util.HashSet<Long>();
+        // Renglones nuevos (sin id): se agregan DESPUÉS de podar los que no
+        // vinieron, porque aún no tienen id y la poda los quitaría.
+        var nuevos = new java.util.ArrayList<QuoteItem>();
         BigDecimal subtotal = BigDecimal.ZERO;
         for (QuoteDtos.UpdateItemRequest itemReq : req.items()) {
-            QuoteItem item = itemsById.get(itemReq.id());
-            if (item == null) {
-                throw new IllegalStateException("La línea " + itemReq.id() + " no pertenece a la cotización");
+            QuoteItem item;
+            if (itemReq.id() == null) {
+                item = new QuoteItem();
+                if (itemReq.productId() != null) {
+                    Product product = products.findByIdAndCompanyId(itemReq.productId(), companyId)
+                            .orElseThrow(() -> new ResourceNotFoundException("Producto " + itemReq.productId() + " no encontrado"));
+                    item.setProduct(product);
+                } else if (itemReq.description() == null || itemReq.description().isBlank()) {
+                    throw new IllegalStateException("Una línea nueva necesita producto o descripción");
+                }
+                item.setUom(itemReq.uom());
+                nuevos.add(item);
+            } else {
+                item = itemsById.get(itemReq.id());
+                if (item == null) {
+                    throw new IllegalStateException("La línea " + itemReq.id() + " no pertenece a la cotización");
+                }
+                keptItemIds.add(item.getId());
             }
             if (itemReq.quantity() == null || itemReq.quantity().signum() <= 0) {
                 throw new IllegalStateException("La cantidad de cada línea debe ser mayor que cero");
@@ -229,25 +315,45 @@ public class QuoteService {
                 throw new IllegalStateException("Precio y descuento deben ser valores válidos");
             }
             BigDecimal factor = BigDecimal.ONE.subtract(discount.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
-            BigDecimal lineTotal = unitPrice.multiply(itemReq.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
             item.setItemName(itemReq.description());
             item.setDescription(itemReq.description());
+            BigDecimal[] medidaAntes = {item.getHeight(), item.getWidth(), item.getDepth()};
+            aplicarMedidas(item, itemReq.dimensions(), itemReq.id() == null);
+            // Se recalcula solo si la medida cambió en esta petición: un precio
+            // que el asesor escribió a mano sobre la misma medida se respeta.
+            boolean medidaCambio = itemReq.id() == null
+                    || distinta(medidaAntes[0], item.getHeight()) || distinta(medidaAntes[1], item.getWidth())
+                    || distinta(medidaAntes[2], item.getDepth());
+            unitPrice = precioConMedidas(item, unitPrice, medidaCambio, companyId);
+            porCotizarSiPendiente(item, unitPrice);
+            BigDecimal lineTotal = unitPrice.multiply(itemReq.quantity()).multiply(factor).setScale(2, RoundingMode.HALF_UP);
+            if (itemReq.showToClient() != null) item.setShowToClient(itemReq.showToClient());
             item.setQuantity(itemReq.quantity());
             item.setUnitPrice(unitPrice);
             item.setDiscount(discount);
             item.setLineTotal(lineTotal);
-            keptItemIds.add(item.getId());
             subtotal = subtotal.add(lineTotal);
         }
 
+        // Una línea calculada con plantilla se lleva su desglose: esos materiales
+        // salieron del cálculo, no del pool del proyecto, y devolverlos al pool
+        // dejaría materia prima suelta que nadie pidió.
+        var calculadasQuitadas = quote.getItems().stream()
+                .filter(i -> i.getTemplateId() != null && i.getId() != null && !keptItemIds.contains(i.getId()))
+                .map(QuoteItem::getId).collect(java.util.stream.Collectors.toSet());
         for (ProjectMaterial material : projectMaterials.findByCompanyIdAndQuoteId(companyId, quote.getId())) {
             if (material.getQuoteItemId() != null && !keptItemIds.contains(material.getQuoteItemId())) {
+                if (calculadasQuitadas.contains(material.getQuoteItemId())) {
+                    projectMaterials.delete(material);
+                    continue;
+                }
                 material.setQuoteId(null);
                 material.setQuoteItemId(null);
                 projectMaterials.update(material);
             }
         }
         quote.getItems().removeIf(item -> !keptItemIds.contains(item.getId()));
+        nuevos.forEach(quote::addItem);
 
         BigDecimal taxRate = quoteCharges.rateFor(quote);
         BigDecimal tax = subtotal.multiply(taxRate).divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
@@ -267,11 +373,14 @@ public class QuoteService {
         Long companyId = tenant.getCompanyId();
         Quote quote = quotes.findByIdAndCompanyId(id, companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
-        if ("enviada".equalsIgnoreCase(req.status()) && !"enviada".equalsIgnoreCase(quote.getStatus())) {
+        boolean pasaAEnviada = "enviada".equalsIgnoreCase(req.status()) && !"enviada".equalsIgnoreCase(quote.getStatus());
+        if (pasaAEnviada) {
             validateExpirationBeforeClientDelivery(quote);
             paymentPlans.validateReadyToSend(id, companyId);
         }
         quote.setStatus(req.status());
+        // Cada envío es una versión: la decisión del cliente se ata a la que vio.
+        if (pasaAEnviada) quote.setSentVersion(quote.getSentVersion() + 1);
         Quote saved = quotes.update(quote);
 
         // Cotización rechazada/cancelada: sus materiales vuelven al pool
@@ -305,7 +414,215 @@ public class QuoteService {
         });
         String action = req.note() != null && !req.note().isBlank() ? req.note() : "Estado → " + req.status();
         history.save(new QuoteHistory(companyId, saved.getId(), action, req.actor()));
+        // Si la pidió por WhatsApp, también le llega por ahí (además del correo,
+        // que manda el controlador). En la misma transacción: si el cambio de
+        // estado no se guarda, tampoco queda el aviso.
+        if (pasaAEnviada && esDeWhatsapp(saved)) encolarEnviadaPorWhatsapp(saved, false);
         return toResponse(saved, history.findByQuoteIdOrderByCreatedAtAsc(saved.getId()));
+    }
+
+    /** Solo las que nacieron en una conversación de WhatsApp pueden avisarse por ahí. */
+    public static boolean esDeWhatsapp(Quote q) {
+        return CANAL_WHATSAPP.equalsIgnoreCase(q.getChannel())
+                && q.getConversationRef() != null && !q.getConversationRef().isBlank();
+    }
+
+    /**
+     * El vendedor vuelve a mandar por WhatsApp la cotización enviada: mismo
+     * PDF y botones de la versión VIGENTE (no sube la versión, así un botón que
+     * el cliente ya tenía sigue valiendo). Solo si nació por WhatsApp.
+     */
+    @Transactional
+    public QuoteDtos.Response reenviarPorWhatsapp(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!esDeWhatsapp(q)) {
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " no se creó por WhatsApp");
+        }
+        if (!"enviada".equalsIgnoreCase(q.getStatus())) {
+            throw new IllegalStateException("Solo se reenvía una cotización enviada (está " + q.getStatus() + ")");
+        }
+        validateExpirationBeforeClientDelivery(q);
+        encolarEnviadaPorWhatsapp(q, true);
+        history.save(new QuoteHistory(companyId, q.getId(),
+                "Reenviada por WhatsApp (versión " + q.getSentVersion() + ")", actor));
+        return toResponse(q, history.findByQuoteIdOrderByCreatedAtAsc(q.getId()));
+    }
+
+    private void encolarEnviadaPorWhatsapp(Quote q, boolean reenvio) {
+        var payload = new QuoteDtos.QuoteSentPayload(q.getId(), q.getDocNumber(), q.getClientName(),
+                "Q " + new java.text.DecimalFormat("#,##0.00", java.text.DecimalFormatSymbols.getInstance(java.util.Locale.US))
+                        .format((q.getTotal() == null ? BigDecimal.ZERO : q.getTotal()).setScale(2, RoundingMode.HALF_UP)),
+                "/api/quotes/" + q.getId() + "/pdf", q.getSentVersion(), reenvio,
+                q.getValidUntil() == null ? null : q.getValidUntil().toString());
+        QuoteNotification n = new QuoteNotification();
+        n.setCompanyId(q.getCompanyId());
+        n.setQuoteId(q.getId());
+        n.setKind(AVISO_ENVIADA);
+        n.setChannel(q.getChannel());
+        n.setConversationRef(q.getConversationRef());
+        try {
+            n.setPayload(json.writeValueAsString(payload));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("No se pudo armar el aviso de envío al cliente", e);
+        }
+        avisos.save(n);
+    }
+
+    // ── Decisión del cliente sobre la cotización enviada ───────────────────
+
+    /** Motivos de rechazo del cliente. Opcionales: nunca se le exigen. */
+    public static final List<QuoteDtos.ClientReason> MOTIVOS_CLIENTE = List.of(
+            new QuoteDtos.ClientReason("precio", "Precio"),
+            new QuoteDtos.ClientReason("plazo_entrega", "Plazo de entrega"),
+            new QuoteDtos.ClientReason("compro_en_otro_lugar", "Compró en otro lugar"),
+            new QuoteDtos.ClientReason("ya_no_lo_necesita", "Ya no lo necesita"),
+            new QuoteDtos.ClientReason("otro", "Otro"));
+
+    /**
+     * El cliente aprueba la versión que se le envió. Solo si la cotización
+     * sigue 'enviada', en ESA versión y vigente: así nunca aprueba algo
+     * distinto de lo que vio.
+     */
+    @Transactional
+    public QuoteDtos.Response aprobarPorCliente(Long id, QuoteDtos.ClientDecisionRequest req) {
+        Quote q = paraDecision(id, req.version());
+        if (q.getValidUntil() != null && q.getValidUntil().isBefore(LocalDate.now())) {
+            history.save(new QuoteHistory(q.getCompanyId(), id,
+                    "El cliente intentó aprobarla vencida (válida hasta " + q.getValidUntil() + "): hay que renovarla", req.actor()));
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " venció el " + q.getValidUntil()
+                    + "; tu asesor debe renovarla");
+        }
+        q.setClientDecidedAt(Instant.now());
+        quotes.update(q);
+        return updateStatus(id, new QuoteDtos.StatusRequest("aprobada",
+                "Aprobada por el cliente (versión " + q.getSentVersion() + ")", req.actor()));
+    }
+
+    /** El cliente rechaza la versión enviada. El motivo es opcional. */
+    @Transactional
+    public QuoteDtos.Response rechazarPorCliente(Long id, QuoteDtos.ClientDecisionRequest req) {
+        Quote q = paraDecision(id, req.version());
+        q.setClientDecidedAt(Instant.now());
+        aplicarMotivo(q, req.reasonCode(), req.note());
+        quotes.update(q);
+        String nota = "Rechazada por el cliente (versión " + q.getSentVersion() + ")"
+                + (q.getClientReasonCode() != null ? " · motivo: " + etiquetaMotivo(q.getClientReasonCode()) : "");
+        return updateStatus(id, new QuoteDtos.StatusRequest("rechazada", nota, req.actor()));
+    }
+
+    /** El cliente cuenta el motivo después de rechazar. Solo sobre una rechazada. */
+    @Transactional
+    public QuoteDtos.Response motivoDelCliente(Long id, QuoteDtos.ClientReasonRequest req) {
+        Long companyId = tenant.getCompanyId();
+        Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!"rechazada".equalsIgnoreCase(q.getStatus())) {
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " no está rechazada");
+        }
+        aplicarMotivo(q, req.reasonCode(), req.note());
+        quotes.update(q);
+        history.save(new QuoteHistory(companyId, id, "Motivo del rechazo: " + etiquetaMotivo(q.getClientReasonCode())
+                + (q.getClientReasonNote() != null ? " — " + q.getClientReasonNote() : ""), null));
+        return get(id);
+    }
+
+    private Quote paraDecision(Long id, Integer version) {
+        Long companyId = tenant.getCompanyId();
+        Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        if (!"enviada".equalsIgnoreCase(q.getStatus())) {
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " está " + q.getStatus()
+                    + ": no espera una decisión del cliente");
+        }
+        if (version == null || version != q.getSentVersion()) {
+            throw new IllegalStateException("VERSION_ANTERIOR: la cotización " + q.getDocNumber()
+                    + " tiene una versión más reciente (v" + q.getSentVersion() + ")");
+        }
+        return q;
+    }
+
+    private void aplicarMotivo(Quote q, String codigo, String nota) {
+        if (codigo != null && !codigo.isBlank()) {
+            boolean valido = MOTIVOS_CLIENTE.stream().anyMatch(m -> m.code().equals(codigo));
+            q.setClientReasonCode(valido ? codigo : "otro");
+        }
+        if (nota != null && !nota.isBlank()) q.setClientReasonNote(nota.trim());
+    }
+
+    private static String etiquetaMotivo(String codigo) {
+        return MOTIVOS_CLIENTE.stream().filter(m -> m.code().equals(codigo)).map(QuoteDtos.ClientReason::label)
+                .findFirst().orElse(codigo == null ? "sin motivo" : codigo);
+    }
+
+    // ── Ciclo de vida de las cotizaciones del asistente ─────────────────────
+
+    /** abierta → prospecto: el cliente la dio por terminada. */
+    @Transactional
+    public QuoteDtos.Response finalizar(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        if (quotes.updateStatusSiEsta(id, companyId, ESTADO_ABIERTA, ESTADO_PROSPECTO) == 0) {
+            Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+            if (ESTADO_PROSPECTO.equalsIgnoreCase(q.getStatus())) return get(id); // ya estaba: idempotente
+            throw new IllegalStateException("La cotización " + q.getDocNumber() + " no está abierta (" + q.getStatus() + ")");
+        }
+        history.save(new QuoteHistory(companyId, id, "El cliente la dio por terminada: pasa a revisión", actor));
+        return get(id);
+    }
+
+    /**
+     * prospecto → abierta: el cliente quiere cambiar algo y ningún vendedor la
+     * abrió todavía. Si ya la tomó un vendedor no se puede: el cliente deja
+     * solicitudes de cambio.
+     */
+    @Transactional
+    public QuoteDtos.Response reabrir(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        if (quotes.updateReabrirSiNoTomada(id, companyId) == 0) {
+            Quote q = quotes.findByIdAndCompanyId(id, companyId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+            if (ESTADO_ABIERTA.equalsIgnoreCase(q.getStatus())) return get(id);
+            throw new IllegalStateException("La cotización " + q.getDocNumber()
+                    + " ya está en manos de un vendedor; los cambios van como solicitud");
+        }
+        history.save(new QuoteHistory(companyId, id, "Reabierta a pedido del cliente", actor));
+        return get(id);
+    }
+
+    /**
+     * Un vendedor abre el prospecto: pasa a borrador y queda a su nombre. Si
+     * no es un prospecto sin tomar, no hace nada (abrirla otra vez, o una
+     * cotización normal).
+     */
+    @Transactional
+    public QuoteDtos.Response tomar(Long id, String actor) {
+        Long companyId = tenant.getCompanyId();
+        if (quotes.updateTomar(id, companyId, actor, Instant.now()) > 0) {
+            history.save(new QuoteHistory(companyId, id, "Tomada para revisión", actor));
+        }
+        return get(id);
+    }
+
+    /** Las últimas cotizaciones de un cliente, para que el asistente informe su estado. */
+    @Transactional
+    public List<QuoteDtos.ClientQuoteSummary> delCliente(Long clientId, int limite) {
+        Long companyId = tenant.getCompanyId();
+        return quotes.findByCliente(companyId, clientId, Pageable.from(0, Math.max(1, Math.min(limite, 20))))
+                .stream()
+                .map(q -> new QuoteDtos.ClientQuoteSummary(q.getId(), q.getDocNumber(), q.getStatus(),
+                        q.getTotal(), q.getTakenAt() != null, q.getQuoteDate(), q.getUpdatedAt(),
+                        q.getSentVersion(), q.getValidUntil()))
+                .toList();
+    }
+
+    /** Anota en la bitácora sin tocar el estado ni nada más de la cotización. */
+    public void addNote(Long id, QuoteDtos.NoteRequest req) {
+        Long companyId = tenant.getCompanyId();
+        quotes.findByIdAndCompanyId(id, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + id + " no encontrada"));
+        history.save(new QuoteHistory(companyId, id, req.note(), req.actor()));
     }
 
     private void validateExpirationBeforeClientDelivery(Quote quote) {
@@ -392,12 +709,183 @@ public class QuoteService {
         return Optional.of(clients.save(c));
     }
 
+    /** 'detailed' o 'global' si viene uno válido; vacío si no viene. */
+    static Optional<String> presentacion(String valor) {
+        if (valor == null || valor.isBlank()) return Optional.empty();
+        String v = valor.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!PRECIO_DETALLADO.equals(v) && !PRECIO_GLOBAL.equals(v)) {
+            throw new IllegalStateException("Presentación de precios inválida: " + valor + " (detailed o global)");
+        }
+        return Optional.of(v);
+    }
+
+    /** Parte fija por defecto del precio por medida (mano de obra, herrajes). */
+    public static final BigDecimal MEDIDA_FIJO_DEFECTO = new BigDecimal("30");
+    /** Tolerancia por defecto: cuánto puede salirse una medida del catálogo. */
+    public static final BigDecimal MEDIDA_TOLERANCIA_DEFECTO = new BigDecimal("25");
+
+    /**
+     * Precio de una línea con medida especial (Configuración → Cotizaciones):
+     *   precio = base × (fijo% + (1 − fijo%) × volumen pedido / volumen catálogo)
+     * Solo si la medida cambió en esta petición y difiere del catálogo; si no,
+     * se queda el precio pedido (el del catálogo o el que puso el asesor). Si
+     * alguna medida se sale más de la tolerancia, la línea queda en 0 y marcada
+     * 'review' para que el asesor la cotice.
+     */
+    BigDecimal precioConMedidas(QuoteItem item, BigDecimal precioPedido, boolean medidaCambio, Long companyId) {
+        // Una línea de plantilla se recalcula con su plantilla, no por volumen.
+        if (item.getTemplateId() != null) return precioPedido;
+        if (!medidaCambio) return precioPedido;
+        if (!medidaEspecial(item)) {
+            item.setSizePricing(null);
+            return precioPedido;
+        }
+        Product p = item.getProduct();
+        BigDecimal base = p != null ? p.getPrice() : null;
+        PrecioMedida r = calcularPorMedida(base,
+                new BigDecimal[]{item.getBaseHeight(), item.getBaseWidth(), item.getBaseDepth()},
+                new BigDecimal[]{item.getHeight(), item.getWidth(), item.getDepth()},
+                porcentaje(companyId, "quotes.size_fixed_pct", MEDIDA_FIJO_DEFECTO),
+                porcentaje(companyId, "quotes.size_tolerance_pct", MEDIDA_TOLERANCIA_DEFECTO));
+        item.setSizePricing(r.estado());
+        return r.precio();
+    }
+
+    /**
+     * Una línea con un producto que propuso el asistente y que nadie ha
+     * revisado no tiene precio: queda «por cotizar» para que el asesor se lo
+     * ponga, igual que una medida especial fuera de rango.
+     */
+    static void porCotizarSiPendiente(QuoteItem item, BigDecimal unitPrice) {
+        Product p = item.getProduct();
+        if (p != null && p.isPendingReview() && (unitPrice == null || unitPrice.signum() == 0)) {
+            item.setSizePricing("review");
+        }
+    }
+
+    /** Resultado del cálculo por medida: precio y 'calculated' o 'review'. */
+    record PrecioMedida(BigDecimal precio, String estado) {}
+
+    static PrecioMedida calcularPorMedida(BigDecimal base, BigDecimal[] catalogo, BigDecimal[] pedida,
+                                         BigDecimal fijoPct, BigDecimal toleranciaPct) {
+        if (base == null || base.signum() <= 0) return new PrecioMedida(BigDecimal.ZERO, "review");
+        BigDecimal volBase = BigDecimal.ONE;
+        BigDecimal volPedido = BigDecimal.ONE;
+        BigDecimal desvio = BigDecimal.ZERO;
+        int usadas = 0;
+        for (int k = 0; k < 3; k++) {
+            BigDecimal b = catalogo[k];
+            BigDecimal v = pedida[k];
+            // Solo se comparan las medidas que existen en los dos lados.
+            if (b == null || v == null || b.signum() <= 0) continue;
+            usadas++;
+            volBase = volBase.multiply(b);
+            volPedido = volPedido.multiply(v);
+            BigDecimal d = v.subtract(b).abs().divide(b, 6, RoundingMode.HALF_UP);
+            if (d.compareTo(desvio) > 0) desvio = d;
+        }
+        if (usadas == 0) return new PrecioMedida(BigDecimal.ZERO, "review");
+        if (desvio.compareTo(toleranciaPct.movePointLeft(2)) > 0) return new PrecioMedida(BigDecimal.ZERO, "review");
+        BigDecimal fijo = fijoPct.movePointLeft(2);
+        BigDecimal factor = fijo.add(BigDecimal.ONE.subtract(fijo)
+                .multiply(volPedido.divide(volBase, 6, RoundingMode.HALF_UP)));
+        return new PrecioMedida(base.multiply(factor).setScale(2, RoundingMode.HALF_UP), "calculated");
+    }
+
+    private BigDecimal porcentaje(Long companyId, String clave, BigDecimal porDefecto) {
+        return settings.findByCompanyIdAndSettingKey(companyId, clave)
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && v.trim().matches("\\d{1,3}(\\.\\d{1,2})?"))
+                .map(v -> new BigDecimal(v.trim()))
+                .filter(v -> v.compareTo(new BigDecimal("100")) <= 0)
+                .orElse(porDefecto);
+    }
+
+    /** Vacía → null; máximo 300 caracteres (la columna). */
+    static String direccion(String v) {
+        if (v == null || v.isBlank()) return null;
+        String limpia = v.trim();
+        if (limpia.length() > 300) throw new IllegalStateException("La dirección de entrega no puede pasar de 300 caracteres");
+        return limpia;
+    }
+
+    /** Vigencia por defecto si la empresa no la configuró. */
+    public static final int VIGENCIA_DEFECTO_DIAS = 15;
+
+    /** Días de vigencia de la empresa (quotes.validity_days) o 15. */
+    public int diasVigencia(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.validity_days")
+                .map(c -> c.getSettingValue())
+                .filter(v -> v != null && v.trim().matches("\\d{1,4}") && Integer.parseInt(v.trim()) > 0)
+                .map(v -> Integer.parseInt(v.trim()))
+                .orElse(VIGENCIA_DEFECTO_DIAS);
+    }
+
+    /** El de la empresa (quotes.price_display) o detallado. */
+    private String presentacionDeEmpresa(Long companyId) {
+        return settings.findByCompanyIdAndSettingKey(companyId, "quotes.price_display")
+                .map(s -> s.getSettingValue())
+                .filter(v -> PRECIO_GLOBAL.equalsIgnoreCase(v == null ? "" : v.trim()))
+                .map(v -> PRECIO_GLOBAL)
+                .orElse(PRECIO_DETALLADO);
+    }
+
+    /**
+     * Medidas de la línea. Una línea nueva copia la medida del catálogo como
+     * base y, si no le piden otra, como medida pedida. En una existente, sin
+     * medidas en la petición se conservan las que tiene.
+     */
+    static void aplicarMedidas(QuoteItem item, QuoteDtos.Dimensions pedida, boolean nueva) {
+        Product p = item.getProduct();
+        if (nueva && p != null) {
+            item.setBaseHeight(p.getHeight());
+            item.setBaseWidth(p.getWidth());
+            item.setBaseDepth(p.getDepth());
+        }
+        if (pedida != null && !pedida.vacia()) {
+            item.setHeight(positiva(pedida.height(), "alto"));
+            item.setWidth(positiva(pedida.width(), "ancho"));
+            item.setDepth(positiva(pedida.depth(), "profundidad"));
+        } else if (nueva) {
+            item.setHeight(item.getBaseHeight());
+            item.setWidth(item.getBaseWidth());
+            item.setDepth(item.getBaseDepth());
+        }
+    }
+
+    private static BigDecimal positiva(BigDecimal v, String nombre) {
+        if (v != null && v.signum() <= 0) throw new IllegalStateException("El " + nombre + " debe ser mayor que cero");
+        return v;
+    }
+
+    private static QuoteDtos.Dimensions dimensiones(BigDecimal h, BigDecimal w, BigDecimal d) {
+        return h == null && w == null && d == null ? null : new QuoteDtos.Dimensions(h, w, d);
+    }
+
+    /** Medida especial: hay base y alguna medida pedida difiere de ella. */
+    static boolean medidaEspecial(QuoteItem i) {
+        boolean hayBase = i.getBaseHeight() != null || i.getBaseWidth() != null || i.getBaseDepth() != null;
+        return hayBase && (distinta(i.getHeight(), i.getBaseHeight())
+                || distinta(i.getWidth(), i.getBaseWidth())
+                || distinta(i.getDepth(), i.getBaseDepth()));
+    }
+
+    private static boolean distinta(BigDecimal a, BigDecimal b) {
+        if (a == null || b == null) return a != b;
+        return a.compareTo(b) != 0;
+    }
+
     private static QuoteDtos.Response toResponse(Quote q, List<QuoteHistory> hist) {
         var items = q.getItems().stream().map(i -> new QuoteDtos.ItemResponse(
                 i.getId(), i.getProduct() != null ? i.getProduct().getId() : null,
                 i.getProduct() != null ? i.getProduct().getName()
                         : (i.getDescription() != null && !i.getDescription().isBlank() ? i.getDescription() : i.getItemName()),
-                i.getUom(), i.getQuantity(), i.getUnitPrice(), i.getDiscount(), i.getLineTotal())).toList();
+                i.getUom(), i.getQuantity(), i.getUnitPrice(), i.getDiscount(), i.getLineTotal(),
+                dimensiones(i.getHeight(), i.getWidth(), i.getDepth()),
+                dimensiones(i.getBaseHeight(), i.getBaseWidth(), i.getBaseDepth()),
+                i.getProduct() != null && i.getProduct().getDimensionUnit() != null ? i.getProduct().getDimensionUnit() : "m",
+                medidaEspecial(i), !Boolean.FALSE.equals(i.getShowToClient()), i.getSizePricing(),
+                i.getDescription(), i.getTemplateId(), i.getTemplateConfig())).toList();
         var historyOut = hist.stream().map(h -> new QuoteDtos.HistoryEntry(
                 h.getId(), h.getAction(), h.getActor(), h.getCreatedAt())).toList();
         return new QuoteDtos.Response(q.getId(), q.getDocNumber(), q.getPartyType(),
@@ -409,6 +897,16 @@ public class QuoteService {
                 q.getProjectId(),
                 q.getSubtotal(), q.getTax(), q.getTaxRate(),
                 q.getProfitCalcType(), q.getProfitValue(), q.getProfitAmount(), q.getTotal(), q.getStatus(), q.getNotes(),
-                items, historyOut);
+                items, historyOut,
+                q.getOrigin(), q.getChannel(), q.getConversationRef(),
+                q.getTakenBy(), q.getTakenAt(),
+                q.getSentVersion(), q.getClientReasonCode(), q.getClientReasonNote(),
+                q.getPriceDisplay(), q.getDeliveryAddress());
+    }
+
+    /** Estados en los que el documento todavía se arma y se puede editar. */
+    public static boolean esEditable(String status) {
+        return ESTADO_BORRADOR.equalsIgnoreCase(status) || "draft".equalsIgnoreCase(status)
+                || ESTADO_PROSPECTO.equalsIgnoreCase(status) || ESTADO_ABIERTA.equalsIgnoreCase(status);
     }
 }

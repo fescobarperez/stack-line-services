@@ -37,6 +37,13 @@ public class ClientController {
                 () -> new com.erp_maya.common.ResourceNotFoundException("Sin cliente con NIT " + nit));
     }
 
+    /** Identificación por teléfono (asistente por WhatsApp): 200 con el cliente o 404. */
+    @Get("/by-phone/{phone}")
+    public ClientDtos.Response byPhone(String phone) {
+        return service.findByPhone(phone).orElseThrow(
+                () -> new com.erp_maya.common.ResourceNotFoundException("Sin cliente con ese teléfono"));
+    }
+
     @Get("/{id}")
     public ClientDtos.Response get(Long id) {
         return service.get(id);

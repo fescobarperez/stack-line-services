@@ -32,6 +32,10 @@ public class Company {
 
     private String status;
 
+    /** Moneda base (035_org_currency). GTQ por defecto, igual que la columna. */
+    @Column(name = "base_currency", nullable = false)
+    private String baseCurrency = "GTQ";
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;
@@ -57,4 +61,10 @@ public class Company {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public String getBaseCurrency() { return baseCurrency; }
+    public void setBaseCurrency(String baseCurrency) { this.baseCurrency = baseCurrency; }
+
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
 }

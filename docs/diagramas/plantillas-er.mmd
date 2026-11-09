@@ -1,0 +1,131 @@
+erDiagram
+    products["products (EXISTENTE)"] {
+        bigint id PK
+        varchar name
+        varchar item_type "sellable | raw_material | service"
+        varchar unit "unidad de uso"
+        varchar purchase_unit
+        numeric purchase_factor
+        numeric cost
+    }
+    product_suppliers["product_suppliers (EXISTENTE)"] {
+        bigint id PK
+        bigint product_id FK
+        bigint supplier_id FK
+        numeric unit_cost
+        boolean preferred
+    }
+    suppliers["suppliers (EXISTENTE)"] {
+        bigint id PK
+        varchar name
+    }
+    product_templates["product_templates (NUEVA)"] {
+        bigint id PK
+        bigint product_id FK "sellable, unico por empresa"
+        varchar name
+        boolean active
+        int version
+    }
+    template_params["template_params (NUEVA)"] {
+        bigint id PK
+        bigint template_id FK
+        varchar code "ancho, profundidad, alto"
+        varchar unit
+        numeric min_value
+        numeric max_value
+        numeric default_value
+    }
+    template_options["template_options (NUEVA)"] {
+        bigint id PK
+        bigint template_id FK
+        varchar code "techo, cielo, acabado"
+        boolean required
+    }
+    option_choices["option_choices (NUEVA)"] {
+        bigint id PK
+        bigint option_id FK
+        varchar code "shingle, regletas"
+        varchar render_text
+        varchar benefit
+        boolean is_default
+    }
+    template_components["template_components (NUEVA)"] {
+        bigint id PK
+        bigint template_id FK
+        bigint choice_id FK "vacio = siempre va"
+        bigint product_id FK "materia prima"
+        varchar quantity_formula
+        numeric waste_pct
+        boolean round_up
+        varchar group_name
+    }
+    template_presets["template_presets (NUEVA)"] {
+        bigint id PK
+        bigint template_id FK
+        varchar code "basica, recomendada, premium"
+        text choices_json
+    }
+    quotes["quotes (EXISTENTE)"] {
+        bigint id PK
+        bigint project_id FK "siempre tiene proyecto"
+        varchar status
+        numeric profit_value
+    }
+    quote_items["quote_items (EXISTENTE + 2)"] {
+        bigint id PK
+        bigint quote_id FK
+        bigint product_id FK
+        bigint source_group_id FK
+        numeric unit_price "costo de materia prima"
+        varchar size_pricing "template | review"
+        bigint template_id FK "NUEVA"
+        text template_config "NUEVA"
+    }
+    quote_charges["quote_charges (EXISTENTE)"] {
+        bigint id PK
+        bigint quote_id FK
+        bigint category_id FK
+        numeric value
+    }
+    projects["projects (EXISTENTE)"] {
+        bigint id PK
+        bigint quote_id FK
+        varchar name
+    }
+    project_material_groups["project_material_groups (EXISTENTE)"] {
+        bigint id PK
+        bigint project_id FK
+        bigint parent_group_id FK
+        varchar name
+    }
+    project_materials["project_materials (EXISTENTE)"] {
+        bigint id PK
+        bigint project_id FK
+        bigint group_id FK
+        bigint quote_id FK
+        bigint quote_item_id FK
+        bigint product_id FK
+        bigint supplier_id FK
+        numeric quantity_planned
+        numeric unit_cost_snapshot
+    }
+
+    suppliers ||--o{ product_suppliers : "vende"
+    products ||--o{ product_suppliers : "costo"
+    products ||--o| product_templates : "se calcula con"
+    product_templates ||--o{ template_params : "pide"
+    product_templates ||--o{ template_options : "ofrece"
+    template_options ||--|{ option_choices : "elecciones"
+    product_templates ||--o{ template_components : "lleva"
+    option_choices ||--o{ template_components : "agrega"
+    products ||--o{ template_components : "materia prima"
+    product_templates ||--o{ template_presets : "combinaciones"
+    quotes ||--|{ quote_items : "lineas"
+    quotes ||--o{ quote_charges : "cargos"
+    product_templates ||--o{ quote_items : "calculada con"
+    products ||--o{ quote_items : "se cotiza"
+    projects ||--o{ quotes : "ancla"
+    projects ||--o{ project_material_groups : "grupos"
+    project_material_groups ||--o{ project_materials : "materiales"
+    quote_items ||--o{ project_materials : "desglose"
+    products ||--o{ project_materials : "materia prima"

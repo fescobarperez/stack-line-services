@@ -92,6 +92,18 @@ public class Quote {
 
     private String notes;
 
+    /** Quien la creo: null = formulario del ERP, "agente" = asistente comercial. */
+    @Column(name = "origin")
+    private String origin;
+
+    /** Canal de la conversacion que la origino (erp, whatsapp, api). */
+    @Column(name = "channel")
+    private String channel;
+
+    /** Id publico de la conversacion en agents-services (cnv_...). */
+    @Column(name = "conversation_ref")
+    private String conversationRef;
+
     /** 'client' (cotización a cliente) | 'supplier' (RFQ a proveedor). */
     @Column(name = "party_type", nullable = false)
     private String partyType = "client";
@@ -125,6 +137,34 @@ public class Quote {
     @Column(name = "created_by")
     private String createdBy;
 
+    /** Vendedor que abrió el prospecto; desde ahí el cliente ya no lo reabre. */
+    @Column(name = "taken_by")
+    private String takenBy;
+
+    @Column(name = "taken_at")
+    private Instant takenAt;
+
+    /** Sube cada vez que pasa a 'enviada': la decisión del cliente es sobre UNA versión. */
+    @Column(name = "sent_version", nullable = false)
+    private int sentVersion;
+
+    /** 'detailed' (precio por línea) o 'global' (solo el total al cliente). */
+    @Column(name = "price_display", nullable = false)
+    private String priceDisplay = "detailed";
+
+    /** Dirección de entrega / instalación (sale en la tarjeta del cliente del PDF). */
+    @Column(name = "delivery_address")
+    private String deliveryAddress;
+
+    @Column(name = "client_reason_code")
+    private String clientReasonCode;
+
+    @Column(name = "client_reason_note")
+    private String clientReasonNote;
+
+    @Column(name = "client_decided_at")
+    private Instant clientDecidedAt;
+
     @OneToMany(mappedBy = "quote", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<QuoteItem> items = new ArrayList<>();
 
@@ -141,6 +181,27 @@ public class Quote {
         item.setCompanyId(this.companyId);
         this.items.add(item);
     }
+
+    public Instant getUpdatedAt() { return updatedAt; }
+
+    public String getDeliveryAddress() { return deliveryAddress; }
+    public void setDeliveryAddress(String deliveryAddress) { this.deliveryAddress = deliveryAddress; }
+    public String getPriceDisplay() { return priceDisplay; }
+    public void setPriceDisplay(String priceDisplay) { this.priceDisplay = priceDisplay; }
+    public int getSentVersion() { return sentVersion; }
+    public void setSentVersion(int sentVersion) { this.sentVersion = sentVersion; }
+    public String getClientReasonCode() { return clientReasonCode; }
+    public void setClientReasonCode(String clientReasonCode) { this.clientReasonCode = clientReasonCode; }
+    public String getClientReasonNote() { return clientReasonNote; }
+    public void setClientReasonNote(String clientReasonNote) { this.clientReasonNote = clientReasonNote; }
+    public Instant getClientDecidedAt() { return clientDecidedAt; }
+    public void setClientDecidedAt(Instant clientDecidedAt) { this.clientDecidedAt = clientDecidedAt; }
+
+    public String getTakenBy() { return takenBy; }
+    public void setTakenBy(String takenBy) { this.takenBy = takenBy; }
+
+    public Instant getTakenAt() { return takenAt; }
+    public void setTakenAt(Instant takenAt) { this.takenAt = takenAt; }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -198,6 +259,12 @@ public class Quote {
 
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getOrigin() { return origin; }
+    public void setOrigin(String origin) { this.origin = origin; }
+    public String getChannel() { return channel; }
+    public void setChannel(String channel) { this.channel = channel; }
+    public String getConversationRef() { return conversationRef; }
+    public void setConversationRef(String conversationRef) { this.conversationRef = conversationRef; }
 
     public List<QuoteItem> getItems() { return items; }
     public void setItems(List<QuoteItem> items) { this.items = items; }

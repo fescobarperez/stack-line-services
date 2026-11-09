@@ -7,6 +7,7 @@ import com.erp_maya.company.repository.BranchRepository;
 import com.erp_maya.company.repository.EstablishmentRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
+import com.erp_maya.platform.service.SubscriptionService;
 import jakarta.inject.Singleton;
 import jakarta.transaction.Transactional;
 
@@ -18,8 +19,11 @@ public class BranchService {
     private final BranchRepository branches;
     private final EstablishmentRepository establishments;
     private final TenantContext tenant;
+    private final SubscriptionService subscription;
 
-    public BranchService(BranchRepository branches, EstablishmentRepository establishments, TenantContext tenant) {
+    public BranchService(BranchRepository branches, EstablishmentRepository establishments, TenantContext tenant,
+                         SubscriptionService subscription) {
+        this.subscription = subscription;
         this.branches = branches;
         this.establishments = establishments;
         this.tenant = tenant;
@@ -41,13 +45,21 @@ public class BranchService {
         Branch b = new Branch();
         b.setCompanyId(tenant.getCompanyId());
         apply(b, req);
+        // Límite de sucursales activas del plan (409 LIMIT_REACHED).
+        if ("active".equals(b.getStatus())) {
+            subscription.checkBranches(tenant.getCompanyId());
+        }
         return toResponse(branches.save(b));
     }
 
     @Transactional
     public BranchDtos.Response update(Long id, BranchDtos.Request req) {
         Branch b = find(id);
+        boolean eraActiva = "active".equals(b.getStatus());
         apply(b, req);
+        if (!eraActiva && "active".equals(b.getStatus())) {
+            subscription.checkBranches(tenant.getCompanyId());
+        }
         return toResponse(branches.update(b));
     }
 
