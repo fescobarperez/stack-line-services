@@ -1,4 +1,7 @@
-# Temporary production maintenance workflow for assigning San Miguel's catalog site.
+# Manual production deployment.
+#
+# The OpenAI key is streamed over the existing verified SSH connection. The
+# deploy script updates deploy/.env atomically and removes the staged copy.
 
 name: Deploy
 
@@ -6,21 +9,21 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Supplier website operation"
+        description: "Service to rebuild"
         type: choice
         required: true
-        default: supplier-site-inspect
-        options: [supplier-site-inspect, supplier-site-apply]
+        default: backend
+        options: [inspect, cancel-builds, configure, backend, crawling, agents, auto, all]
 
 concurrency:
   group: deploy-produccion
   cancel-in-progress: false
 
 jobs:
-  supplier-site:
+  deploy:
     runs-on: ubuntu-latest
     environment: produccion
-    timeout-minutes: 10
+    timeout-minutes: 45
 
     steps:
       - name: Prepare SSH key
@@ -30,198 +33,61 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
-      - name: Inspect or assign supplier website
+      - name: Inspect EC2
+        if: inputs.target == 'inspect'
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              'bash -s -- "${{ inputs.target }}"' <<'REMOTE'
-          set -euo pipefail
+              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== largest processes ==="; ps -eo pid,ppid,%cpu,%mem,rss,etime,args --sort=-rss | head -n 20; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
 
-          mode="$1"
-          deploy_dir="$HOME/stackline/stack-line-services/deploy"
-          cd "$deploy_dir"
+      - name: Cancel stale image builds
+        if: inputs.target == 'cancel-builds'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              'set -eu; pids="$(pgrep -f "^/opt/java/openjdk/bin/java .*org.gradle.launcher.daemon.bootstrap.GradleDaemon|^/opt/java/openjdk/bin/java .* /src/gradle/wrapper/gradle-wrapper.jar .*shadowJar" || true)"; if [ -z "$pids" ]; then echo "No stale Gradle builds found"; exit 0; fi; echo "Stopping stale Gradle build processes: $pids"; sudo kill -TERM $pids; sleep 10; remaining=""; for pid in $pids; do if sudo kill -0 "$pid" 2>/dev/null; then remaining="$remaining $pid"; fi; done; if [ -n "$remaining" ]; then echo "Force-stopping unresponsive build processes:$remaining"; sudo kill -KILL $remaining; fi; echo "Stale Gradle builds stopped"'
 
-          company_code="$(docker compose exec -T backend printenv ERP_SEED_COMPANY_CODE </dev/null)"
-          admin_email="$(docker compose exec -T backend printenv ERP_SEED_ADMIN_EMAIL </dev/null)"
-          admin_password="$(docker compose exec -T backend printenv ERP_SEED_ADMIN_PASSWORD </dev/null)"
-          export STACKLINE_COMPANY_CODE="$company_code"
-          export STACKLINE_ADMIN_EMAIL="$admin_email"
-          export STACKLINE_ADMIN_PASSWORD="$admin_password"
+      - name: Stage OpenAI key
+        if: inputs.target != 'inspect' && inputs.target != 'cancel-builds'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is not configured" >&2
+            exit 1
+          fi
+          printf '%s\n' "$OPENAI_API_KEY" | ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              'umask 077; dd of="$HOME/.stackline-openai-key" status=none'
 
-          python3 - "$mode" <<'PY'
-          import json
-          import os
-          import sys
-          import urllib.error
-          import urllib.parse
-          import urllib.request
+      - name: Deploy
+        if: inputs.target != 'inspect' && inputs.target != 'cancel-builds'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              "git -C ~/stackline/stack-line-services fetch -q origin main && git -C ~/stackline/stack-line-services show origin/main:deploy/deploy.sh | OPENAI_KEY_FILE=\$HOME/.stackline-openai-key bash -s -- ${{ inputs.target }}"
 
-          mode = sys.argv[1]
-          if mode not in {"supplier-site-inspect", "supplier-site-apply"}:
-              raise SystemExit(f"Unsupported operation: {mode}")
-
-          api_base = "http://127.0.0.1/api"
-          target_supplier_name = "San Miguel Maderas"
-          target_url = "https://sanmiguelmadera.com"
-
-          def api_request(method, path, payload=None, token=None):
-              data = None
-              headers = {"Accept": "application/json"}
-              if payload is not None:
-                  data = json.dumps(payload).encode("utf-8")
-                  headers["Content-Type"] = "application/json"
-              if token:
-                  headers["Authorization"] = f"Bearer {token}"
-              request = urllib.request.Request(
-                  api_base + path,
-                  data=data,
-                  headers=headers,
-                  method=method,
-              )
-              try:
-                  with urllib.request.urlopen(request, timeout=20) as response:
-                      body = response.read().decode("utf-8")
-                      return json.loads(body) if body else None
-              except urllib.error.HTTPError as error:
-                  body = error.read().decode("utf-8", errors="replace")[:1000]
-                  raise SystemExit(
-                      f"API request failed: {method} {path} returned {error.code}: {body}"
-                  ) from None
-
-          login = api_request(
-              "POST",
-              "/auth/login",
-              {
-                  "companyCode": os.environ["STACKLINE_COMPANY_CODE"],
-                  "email": os.environ["STACKLINE_ADMIN_EMAIL"],
-                  "password": os.environ["STACKLINE_ADMIN_PASSWORD"],
-              },
-          )
-          token = login.get("token") if isinstance(login, dict) else None
-          if not token:
-              raise SystemExit("Production login did not return a token")
-
-          search = urllib.parse.quote("San")
-          supplier_page = api_request(
-              "GET", f"/suppliers?search={search}&size=100", token=token
-          )
-          suppliers = supplier_page.get("content", []) if isinstance(supplier_page, dict) else []
-          exact_suppliers = [
-              supplier
-              for supplier in suppliers
-              if str(supplier.get("name", "")).strip().casefold()
-              == target_supplier_name.casefold()
-          ]
-          websites = api_request("GET", "/supplier-websites", token=token)
-          websites = websites if isinstance(websites, list) else []
-
-          def normalized_url(value):
-              parsed = urllib.parse.urlsplit(str(value).strip())
-              host = (parsed.hostname or "").casefold()
-              if host.startswith("www."):
-                  host = host[4:]
-              path = parsed.path.rstrip("/")
-              return host + path
-
-          target_key = normalized_url(target_url)
-          url_matches = [
-              website
-              for website in websites
-              if normalized_url(website.get("baseUrl", "")) == target_key
-          ]
-
-          print("Supplier search results:")
-          print(json.dumps(
-              [{"id": row.get("id"), "name": row.get("name")} for row in suppliers],
-              ensure_ascii=False,
-          ))
-          print("Exact supplier matches:")
-          print(json.dumps(
-              [{"id": row.get("id"), "name": row.get("name")} for row in exact_suppliers],
-              ensure_ascii=False,
-          ))
-          print("Existing matching website rows:")
-          print(json.dumps(
-              [
-                  {
-                      "id": row.get("id"),
-                      "supplierId": row.get("supplierId"),
-                      "name": row.get("name"),
-                      "baseUrl": row.get("baseUrl"),
-                      "status": row.get("status"),
-                      "crawlEnabled": row.get("crawlEnabled"),
-                  }
-                  for row in url_matches
-              ],
-              ensure_ascii=False,
-          ))
-
-          if mode == "supplier-site-inspect":
-              raise SystemExit(0)
-
-          if len(exact_suppliers) != 1:
-              raise SystemExit(
-                  f"Expected exactly one supplier named San Miguel, found {len(exact_suppliers)}"
-              )
-          supplier_id = exact_suppliers[0]["id"]
-
-          wrong_supplier_rows = [
-              row for row in url_matches if row.get("supplierId") != supplier_id
-          ]
-          if wrong_supplier_rows:
-              raise SystemExit(
-                  "The target URL is already assigned to a different supplier; no change was made"
-              )
-
-          if url_matches:
-              result = url_matches[0]
-              action = "already assigned"
-          else:
-              result = api_request(
-                  "POST",
-                  "/supplier-websites",
-                  {
-                      "supplierId": supplier_id,
-                      "name": target_supplier_name,
-                      "baseUrl": target_url,
-                      "websiteType": "ecommerce",
-                      "status": "active",
-                      "crawlEnabled": True,
-                  },
-                  token=token,
-              )
-              action = "created"
-
-          verified = api_request(
-              "GET", f"/supplier-websites/{result['id']}", token=token
-          )
-          if (
-              verified.get("supplierId") != supplier_id
-              or normalized_url(verified.get("baseUrl", "")) != target_key
-          ):
-              raise SystemExit("Post-write verification failed")
-
-          print("Verified production assignment:")
-          print(json.dumps(
-              {
-                  "action": action,
-                  "websiteId": verified.get("id"),
-                  "supplierId": verified.get("supplierId"),
-                  "supplierName": target_supplier_name,
-                  "name": verified.get("name"),
-                  "baseUrl": verified.get("baseUrl"),
-                  "websiteType": verified.get("websiteType"),
-                  "status": verified.get("status"),
-                  "crawlEnabled": verified.get("crawlEnabled"),
-              },
-              ensure_ascii=False,
-          ))
-          PY
-          REMOTE
-
-      - name: Remove SSH key
+      - name: Remove transient keys
         if: always()
-        run: rm -f ~/.ssh/deploy_key
+        run: |
+          if [ -f ~/.ssh/deploy_key ]; then
+            ssh -i ~/.ssh/deploy_key \
+                -o BatchMode=yes \
+                -o ServerAliveInterval=30 \
+                -o ServerAliveCountMax=10 \
+                "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+                'rm -f -- "$HOME/.stackline-openai-key"' || true
+          fi
+          rm -f ~/.ssh/deploy_key
