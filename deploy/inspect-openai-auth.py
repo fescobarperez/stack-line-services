@@ -62,3 +62,44 @@ except urllib.error.HTTPError as error:
 except urllib.error.URLError as error:
     print("configured_model_status=transport_error")
     print(f"configured_model_transport_error={type(error.reason).__name__}")
+
+# Also inspect the requested discovery run without exposing credentials.
+discovery_run_id = "discover-2be3bc4d-0178-4bb1-9c5b-b722c1a59204"
+storage_root = Path(os.getenv("CRAWL_STORAGE_ROOT", "/var/lib/stackline/crawling"))
+print(f"discovery_storage_root={storage_root}")
+found = []
+for registry in storage_root.glob(".jobs/*.json"):
+    try:
+        value = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if value.get("run_id") == discovery_run_id:
+        found.append((registry, value))
+if not found:
+    for state_path in storage_root.rglob("run-state.json"):
+        try:
+            value = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if value.get("run_id") == discovery_run_id:
+            found.append((state_path, {"run_id": discovery_run_id, "build_root": str(state_path.parent), **value}))
+print(f"discovery_run_found={bool(found)}")
+for source, job in found:
+    print(f"discovery_source={source}")
+    print(f"discovery_status={job.get('status')}")
+    build_root = Path(str(job.get("build_root", source.parent)))
+    print(f"discovery_build_root={build_root}")
+    for relative in ("run-state.json", "results/categories-result.json"):
+        path = build_root / relative
+        print(f"discovery_{relative.replace('/', '_')}_exists={path.is_file()}")
+        if path.is_file() and relative.endswith(".json"):
+            try:
+                print(f"discovery_{relative.replace('/', '_')}={path.read_text(encoding='utf-8')[:4000]}")
+            except OSError:
+                pass
+    transcript = build_root / "logs/agent-transcript.jsonl"
+    if transcript.is_file():
+        lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+        print(f"discovery_transcript_lines={len(lines)}")
+        for line in lines[-80:]:
+            print("DISCOVERY_TRANSCRIPT " + line[:4000])
