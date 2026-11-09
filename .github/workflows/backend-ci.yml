@@ -39,5 +39,5 @@ jobs:
           java-version: "25"
           cache: gradle
 
-      - name: Compile backend
-        run: ./gradlew --no-daemon compileJava
+      - name: Test backend
+        run: ./gradlew --no-daemon test
