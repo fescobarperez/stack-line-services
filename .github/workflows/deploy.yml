@@ -1,7 +1,7 @@
 # Manual production deployment.
 #
-# The workflow updates the deployment orchestrator before executing it so the
-# first rollout of a new service does not continue under an older shell script.
+# The OpenAI key is streamed over the existing verified SSH connection. The
+# deploy script updates deploy/.env atomically and removes the staged copy.
 
 name: Deploy
 
@@ -13,7 +13,7 @@ on:
         type: choice
         required: true
         default: backend
-        options: [backend, crawling, auto, all]
+        options: [configure, backend, crawling, auto, all]
 
 concurrency:
   group: deploy-produccion
@@ -33,13 +33,33 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
+      - name: Stage OpenAI key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is not configured" >&2
+            exit 1
+          fi
+          printf '%s\n' "$OPENAI_API_KEY" | ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              'umask 077; dd of="$HOME/.stackline-openai-key" status=none'
+
       - name: Deploy
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              "git -C ~/stackline/stack-line-services fetch -q origin main && git -C ~/stackline/stack-line-services show origin/main:deploy/deploy.sh | bash -s -- ${{ inputs.target }}"
+              "git -C ~/stackline/stack-line-services fetch -q origin main && git -C ~/stackline/stack-line-services show origin/main:deploy/deploy.sh | OPENAI_KEY_FILE=\$HOME/.stackline-openai-key bash -s -- ${{ inputs.target }}"
 
-      - name: Remove SSH key
+      - name: Remove transient keys
         if: always()
-        run: rm -f ~/.ssh/deploy_key
+        run: |
+          if [ -f ~/.ssh/deploy_key ]; then
+            ssh -i ~/.ssh/deploy_key \
+                -o BatchMode=yes \
+                "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+                'rm -f -- "$HOME/.stackline-openai-key"' || true
+          fi
+          rm -f ~/.ssh/deploy_key

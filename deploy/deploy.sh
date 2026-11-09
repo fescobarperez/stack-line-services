@@ -3,6 +3,7 @@
 # Deploy Stackline on the application server.
 #
 #   ./deploy.sh             rebuilds services whose source changed
+#   ./deploy.sh configure   syncs crawler AI variables without deploying
 #   ./deploy.sh backend     forces the ERP backend
 #   ./deploy.sh web         forces the web application
 #   ./deploy.sh agents      forces agents-services
@@ -22,6 +23,92 @@ TARGET="${1:-auto}"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
+cleanup_secret_file() {
+  if [ -n "${OPENAI_KEY_FILE:-}" ] && [ -e "$OPENAI_KEY_FILE" ]; then
+    chmod 600 "$OPENAI_KEY_FILE" 2>/dev/null || true
+    rm -f -- "$OPENAI_KEY_FILE"
+  fi
+}
+trap cleanup_secret_file EXIT
+
+sync_openai_environment() {
+  if [ -z "${OPENAI_KEY_FILE:-}" ]; then
+    return
+  fi
+  if [ ! -s "$OPENAI_KEY_FILE" ]; then
+    echo "The staged OPENAI_API_KEY file is missing or empty" >&2
+    exit 1
+  fi
+
+  local env_file="$DEPLOY_DIR/.env"
+  if [ ! -f "$env_file" ]; then
+    echo "Deployment environment file does not exist: $env_file" >&2
+    exit 1
+  fi
+
+  local openai_key
+  IFS= read -r openai_key < "$OPENAI_KEY_FILE"
+  if [ -z "$openai_key" ]; then
+    echo "OPENAI_API_KEY is empty" >&2
+    exit 1
+  fi
+
+  OPENAI_KEY_VALUE="$openai_key" python3 - "$env_file" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+
+env_path = Path(sys.argv[1])
+openai_key = os.environ["OPENAI_KEY_VALUE"]
+if "\n" in openai_key or "\r" in openai_key:
+    raise SystemExit("OPENAI_API_KEY must be a single line")
+
+updates = {
+    "OPENAI_API_KEY": openai_key,
+    "AI_MODE": "real",
+    "AI_CHAT_MODEL": "gpt-6-luna",
+    "AI_CHAT_BASE_URL": "https://api.openai.com/v1/chat/completions",
+}
+lines = env_path.read_text(encoding="utf-8").splitlines()
+seen = set()
+updated_lines = []
+for line in lines:
+    stripped = line.lstrip()
+    if not stripped.startswith("#") and "=" in line:
+        name = line.split("=", 1)[0].strip()
+        if name in updates:
+            updated_lines.append(f"{name}={updates[name]}")
+            seen.add(name)
+            continue
+    updated_lines.append(line)
+
+missing = [name for name in updates if name not in seen]
+if missing:
+    if updated_lines and updated_lines[-1] != "":
+        updated_lines.append("")
+    updated_lines.append("# Managed by the production deployment workflow.")
+    updated_lines.extend(f"{name}={updates[name]}" for name in missing)
+
+mode = stat.S_IMODE(env_path.stat().st_mode)
+fd, temporary_name = tempfile.mkstemp(prefix=".env.", dir=env_path.parent)
+os.close(fd)
+temporary_path = Path(temporary_name)
+try:
+    temporary_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+    temporary_path.chmod(mode)
+    temporary_path.replace(env_path)
+finally:
+    temporary_path.unlink(missing_ok=True)
+PY
+
+  unset openai_key
+  cleanup_secret_file
+  OPENAI_KEY_FILE=""
+  echo "Crawler AI environment updated"
+}
+
 ensure_crawler_repository() {
   if [ -d "$CRAWLER_DIR/.git" ]; then
     return
@@ -36,9 +123,21 @@ ensure_crawler_repository() {
 }
 
 case "$TARGET" in
-  auto|backend|web|agents|crawling|all) ;;
-  *) echo "Invalid target: $TARGET (use auto|backend|web|agents|crawling|all)" >&2; exit 1 ;;
+  configure|auto|backend|web|agents|crawling|all) ;;
+  *) echo "Invalid target: $TARGET (use configure|auto|backend|web|agents|crawling|all)" >&2; exit 1 ;;
 esac
+
+if [ "$TARGET" = "configure" ] && [ -z "${OPENAI_KEY_FILE:-}" ]; then
+  echo "The configure target requires OPENAI_KEY_FILE" >&2
+  exit 1
+fi
+
+# GitHub Actions stages the secret with mode 0600 and passes only its path.
+sync_openai_environment
+if [ "$TARGET" = "configure" ]; then
+  echo "Production crawler AI variables are configured"
+  exit 0
+fi
 
 # The crawler is public and can be bootstrapped without storing another deploy key.
 ensure_crawler_repository

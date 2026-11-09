@@ -183,9 +183,16 @@ requires these repository secrets:
 | `SSH_HOST` | la IP elástica del servidor |
 | `SSH_USER` | `ubuntu` |
 | `SSH_KNOWN_HOSTS` | salida de `ssh-keyscan -t ed25519 <IP>` |
+| `OPENAI_API_KEY` | OpenAI API key streamed into the private EC2 `deploy/.env` |
 
-`SSH_KNOWN_HOSTS` evita aceptar a ciegas cualquier servidor que responda: sin
-él, un intermediario podría suplantarlo y quedarse con la clave privada.
+The workflow never places the OpenAI key in a command argument or log. It sends
+the value through SSH standard input to a mode-0600 temporary file. The deploy
+script atomically updates `OPENAI_API_KEY`, `AI_MODE`, `AI_CHAT_MODEL`, and
+`AI_CHAT_BASE_URL`, then removes the temporary file. Run the workflow with
+`configure` to update only these variables, or with a service target to sync
+them immediately before deploying.
+`SSH_KNOWN_HOSTS` pins the server host key so the workflow does not send
+credentials to an impersonated host.
 
 Para exigir aprobación antes de cada despliegue: Settings → Environments →
 `produccion` → **Required reviewers**. El flujo queda en espera hasta que
