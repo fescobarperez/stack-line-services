@@ -41,7 +41,7 @@ jobs:
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== largest processes ==="; ps -eo pid,ppid,%cpu,%mem,rss,etime,comm --sort=-rss | head -n 20; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
+              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== largest processes ==="; ps -eo pid,ppid,%cpu,%mem,rss,etime,args --sort=-rss | head -n 20; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
 
       - name: Stage OpenAI key
         if: inputs.target != 'inspect'
