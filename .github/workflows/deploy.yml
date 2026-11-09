@@ -13,7 +13,7 @@ on:
         type: choice
         required: true
         default: backend
-        options: [configure, backend, crawling, auto, all]
+        options: [inspect, configure, backend, crawling, agents, auto, all]
 
 concurrency:
   group: deploy-produccion
@@ -33,7 +33,16 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
+      - name: Inspect EC2
+        if: inputs.target == 'inspect'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
+
       - name: Stage OpenAI key
+        if: inputs.target != 'inspect'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -47,6 +56,7 @@ jobs:
               'umask 077; dd of="$HOME/.stackline-openai-key" status=none'
 
       - name: Deploy
+        if: inputs.target != 'inspect'
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
