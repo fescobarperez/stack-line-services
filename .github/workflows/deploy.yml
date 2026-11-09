@@ -44,9 +44,9 @@ jobs:
           deploy_dir="$HOME/stackline/stack-line-services/deploy"
           cd "$deploy_dir"
 
-          company_code="$(docker compose exec -T backend printenv ERP_SEED_COMPANY_CODE)"
-          admin_email="$(docker compose exec -T backend printenv ERP_SEED_ADMIN_EMAIL)"
-          admin_password="$(docker compose exec -T backend printenv ERP_SEED_ADMIN_PASSWORD)"
+          company_code="$(docker compose exec -T backend printenv ERP_SEED_COMPANY_CODE </dev/null)"
+          admin_email="$(docker compose exec -T backend printenv ERP_SEED_ADMIN_EMAIL </dev/null)"
+          admin_password="$(docker compose exec -T backend printenv ERP_SEED_ADMIN_PASSWORD </dev/null)"
           export STACKLINE_COMPANY_CODE="$company_code"
           export STACKLINE_ADMIN_EMAIL="$admin_email"
           export STACKLINE_ADMIN_PASSWORD="$admin_password"
