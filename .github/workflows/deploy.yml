@@ -13,7 +13,7 @@ on:
         type: choice
         required: true
         default: backend
-        options: [configure, backend, crawling, auto, all]
+        options: [inspect, cancel-builds, configure, backend, crawling, agents, auto, all]
 
 concurrency:
   group: deploy-produccion
@@ -23,7 +23,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: produccion
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - name: Prepare SSH key
@@ -33,7 +33,28 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
+      - name: Inspect EC2
+        if: inputs.target == 'inspect'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              'set -eu; echo "=== uptime ==="; uptime; echo "=== memory ==="; free -h; echo "=== swap ==="; swapon --show; echo "=== largest processes ==="; ps -eo pid,ppid,%cpu,%mem,rss,etime,args --sort=-rss | head -n 20; echo "=== disk ==="; df -h /; echo "=== containers ==="; cd "$HOME/stackline/stack-line-services/deploy"; docker compose ps; echo "=== Docker storage ==="; docker system df; echo "=== recent kernel events ==="; sudo journalctl -k --since "30 minutes ago" --no-pager | tail -n 150; echo "=== recent Docker events ==="; sudo journalctl -u docker --since "30 minutes ago" --no-pager | tail -n 100'
+
+      - name: Cancel stale image builds
+        if: inputs.target == 'cancel-builds'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+              'set -eu; pids="$(pgrep -f "^/opt/java/openjdk/bin/java .*org.gradle.launcher.daemon.bootstrap.GradleDaemon|^/opt/java/openjdk/bin/java .* /src/gradle/wrapper/gradle-wrapper.jar .*shadowJar" || true)"; if [ -z "$pids" ]; then echo "No stale Gradle builds found"; exit 0; fi; echo "Stopping stale Gradle build processes: $pids"; sudo kill -TERM $pids; sleep 10; remaining=""; for pid in $pids; do if sudo kill -0 "$pid" 2>/dev/null; then remaining="$remaining $pid"; fi; done; if [ -n "$remaining" ]; then echo "Force-stopping unresponsive build processes:$remaining"; sudo kill -KILL $remaining; fi; echo "Stale Gradle builds stopped"'
+
       - name: Stage OpenAI key
+        if: inputs.target != 'inspect' && inputs.target != 'cancel-builds'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -43,13 +64,18 @@ jobs:
           fi
           printf '%s\n' "$OPENAI_API_KEY" | ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
               'umask 077; dd of="$HOME/.stackline-openai-key" status=none'
 
       - name: Deploy
+        if: inputs.target != 'inspect' && inputs.target != 'cancel-builds'
         run: |
           ssh -i ~/.ssh/deploy_key \
               -o BatchMode=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
               "git -C ~/stackline/stack-line-services fetch -q origin main && git -C ~/stackline/stack-line-services show origin/main:deploy/deploy.sh | OPENAI_KEY_FILE=\$HOME/.stackline-openai-key bash -s -- ${{ inputs.target }}"
 
@@ -59,6 +85,8 @@ jobs:
           if [ -f ~/.ssh/deploy_key ]; then
             ssh -i ~/.ssh/deploy_key \
                 -o BatchMode=yes \
+                -o ServerAliveInterval=30 \
+                -o ServerAliveCountMax=10 \
                 "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
                 'rm -f -- "$HOME/.stackline-openai-key"' || true
           fi
