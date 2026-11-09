@@ -363,7 +363,7 @@ public class CatalogImportService {
             var created = productService.create(new ProductRequest(
                     sku, name, null, BigDecimal.ZERO, cost, defaultText(data, "unit", "unid"),
                     null, BigDecimal.ONE, "raw_material", Boolean.TRUE, null, "active",
-                    batch.getSupplierId(), cost));
+                    batch.getSupplierId(), cost, null, null, null, null));
             productId = created.id();
         } else if (productId == null) {
             throw new IllegalStateException("La fila " + item.getRowNumber() + " no tiene producto candidato");

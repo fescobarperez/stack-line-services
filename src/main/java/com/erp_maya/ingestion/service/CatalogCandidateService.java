@@ -48,7 +48,7 @@ public class CatalogCandidateService {
         }
         if (candidates.isEmpty()) {
             String normalizedIncoming = normalize(name);
-            candidates = products.findByCompanyId(companyId, Pageable.from(0, 100)).getContent().stream()
+            candidates = products.findByCompanyIdAndReviewStatusIsNull(companyId, Pageable.from(0, 100)).getContent().stream()
                     .filter(product -> tokenOverlap(normalizedIncoming, normalize(product.getName())) >= 0.45)
                     .limit(LIMIT)
                     .toList();
