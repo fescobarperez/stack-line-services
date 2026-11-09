@@ -104,7 +104,7 @@ jobs:
           if not token:
               raise SystemExit("Production login did not return a token")
 
-          search = urllib.parse.quote(target_supplier_name)
+          search = urllib.parse.quote("San")
           supplier_page = api_request(
               "GET", f"/suppliers?search={search}&size=100", token=token
           )
@@ -133,6 +133,11 @@ jobs:
               if normalized_url(website.get("baseUrl", "")) == target_key
           ]
 
+          print("Supplier search results:")
+          print(json.dumps(
+              [{"id": row.get("id"), "name": row.get("name")} for row in suppliers],
+              ensure_ascii=False,
+          ))
           print("Exact supplier matches:")
           print(json.dumps(
               [{"id": row.get("id"), "name": row.get("name")} for row in exact_suppliers],
