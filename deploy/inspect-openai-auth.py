@@ -43,3 +43,22 @@ except urllib.error.HTTPError as error:
 except urllib.error.URLError as error:
     print("openai_auth_status=transport_error")
     print(f"openai_transport_error={type(error.reason).__name__}")
+
+model_url = f"{models_url.rstrip('/')}/{urllib.parse.quote(model, safe='')}"
+model_request = urllib.request.Request(model_url, headers={"Authorization": f"Bearer {key}"})
+try:
+    with urllib.request.urlopen(model_request, timeout=15) as response:
+        print(f"configured_model_status={response.status}")
+except urllib.error.HTTPError as error:
+    try:
+        payload = json.loads(error.read().decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+    details = payload.get("error") if isinstance(payload, dict) else {}
+    details = details if isinstance(details, dict) else {}
+    print(f"configured_model_status={error.code}")
+    print(f"configured_model_error_type={details.get('type', '')}")
+    print(f"configured_model_error_code={details.get('code', '')}")
+except urllib.error.URLError as error:
+    print("configured_model_status=transport_error")
+    print(f"configured_model_transport_error={type(error.reason).__name__}")
