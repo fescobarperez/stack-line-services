@@ -64,7 +64,7 @@ jobs:
               raise SystemExit(f"Unsupported operation: {mode}")
 
           api_base = "http://127.0.0.1/api"
-          target_supplier_name = "San Miguel"
+          target_supplier_name = "San Miguel Maderas"
           target_url = "https://sanmiguelmadera.com"
 
           def api_request(method, path, payload=None, token=None):
