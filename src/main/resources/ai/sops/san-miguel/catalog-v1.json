@@ -1,0 +1,25 @@
+{
+  "id": "san-miguel-catalog",
+  "version": "v1",
+  "pagination": {
+    "required": true,
+    "strategy": "follow_next_link",
+    "maxPages": 500,
+    "stopConditions": [
+      "no_next_link",
+      "repeated_page_url",
+      "empty_product_page"
+    ]
+  },
+  "completeness": {
+    "reportVisitedPages": true,
+    "reportFailedPages": true,
+    "requirePaginationCheck": true
+  },
+  "fields": {
+    "name": ["producto", "product_name"],
+    "unitCost": ["precio_gtq", "price", "unit_cost"],
+    "sourceListingUrl": ["url_fuente", "source_url"],
+    "categoryPath": ["categoria", "subcategoria"]
+  }
+}

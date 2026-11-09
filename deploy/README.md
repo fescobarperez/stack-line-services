@@ -1,11 +1,12 @@
-# Despliegue de Stackline
+# Stackline deployment
 
-Tres contenedores: Postgres, el backend Micronaut y Caddy, que sirve el
-front y hace de proxy de `/api`. Como el navegador ve un solo origen, no hay
-CORS que configurar.
+The production stack runs four application containers: the Micronaut backend,
+the Python crawler, the sales agent, and Caddy for the web application and
+reverse proxy. PostgreSQL is available only through the optional `local-db`
+profile because deployed environments use RDS.
 
-Solo Caddy publica puertos. La base de datos y el backend viven en la red
-interna de Docker y **no son alcanzables desde internet**.
+Only Caddy publishes host ports. The backend, crawler, agent, and database stay
+inside the Docker network.
 
 ---
 
@@ -34,14 +35,18 @@ curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER && exec newgrp docker
 ```
 
-## 3. Los repos, como hermanos
+## 3. Sibling repositories
 
-El compose espera esta disposición:
+Docker Compose expects this directory layout. `deploy.sh` clones the public
+crawler repository automatically if it is missing; the commands below show the
+complete initial setup.
 
 ```bash
 mkdir -p ~/stackline && cd ~/stackline
 git clone https://github.com/fescobarperez/stack-line-services.git
 git clone https://github.com/fescobarperez/stack-line-ui.git
+git clone https://github.com/fescobarperez/agents-services.git
+git clone --branch feat/initial-crawling-runtime https://github.com/bragonya/sites-crawler.git
 ```
 
 ## 4. Configuración
@@ -92,17 +97,35 @@ puede validarlo y Caddy saca el certificado solo. Después: `docker compose up -
 
 ---
 
+## Python crawler
+
+The `crawling` container is built from `~/stackline/sites-crawler`. It shares
+`crawlingdata` with the backend but does not publish port 8090 on the host. The
+backend reaches it at `http://crawling:8090`.
+
+Before the first rollout, set these values in `deploy/.env`:
+
+```dotenv
+AI_MODE=real
+AI_CHAT_MODEL=gpt-6-luna
+AI_CHAT_BASE_URL=https://api.openai.com/v1/chat/completions
+OPENAI_API_KEY=<set-locally-on-the-server>
+CRAWLING_SERVICE_URL=http://crawling:8090
+```
+
+Do not commit the real API key. The deployment preflight fails before changing
+containers when the key is missing. The crawler health check confirms that the
+HTTP process is running; a release smoke test must still execute a real model
+request to verify that the configured provider accepts `AI_CHAT_MODEL`.
+
 ## Agente de ventas (agents-services)
 
 Cuarto contenedor, `agents`. No publica puertos: el backend le habla por la
 red interna y Caddy solo le reenvía `/webhooks/whatsapp`.
 
-**Una sola vez**, antes del primer arranque:
+**Una sola vez**, antes del primer arranque, crea el esquema del agente:
 
 ```bash
-cd ~/stackline
-git clone https://github.com/fescobarperez/agents-services.git
-
 # Esquemas por ambiente en la misma base (Liquibase no los crea):
 #   dev  → stackline_dev  y agents_dev
 #   prod → stackline_prod y agents_prod
@@ -139,19 +162,20 @@ tú decides cuándo publicarlos.
 ssh -i ~/.ssh/stackline.pem ubuntu@3.142.8.206 './stackline/stack-line-services/deploy/deploy.sh'
 ```
 
-El script trae ambos repositorios y **reconstruye solo lo que cambió**,
-comparando el commit antes y después del pull. Un cambio en el README o en
-el compose no recompila el jar, que son ~8 minutos en esta instancia.
+The script updates all four repositories and rebuilds only images whose source
+changed. Use `deploy.sh backend`, `deploy.sh web`, `deploy.sh agents`, or
+`deploy.sh crawling` for a targeted rollout. Use `deploy.sh all` for the first
+crawler rollout so every dependency is started from a known revision.
 
-Para forzar: `deploy.sh backend`, `deploy.sh web` o `deploy.sh all`.
-
-Termina esperando a que el front y la API respondan; si no lo hacen en tres
-minutos, imprime los logs del backend y sale con error.
+Verification requires the web application, authenticated API boundary, sales
+agent route, and crawler `/healthz` endpoint to respond.
 
 ### Desde GitHub
 
-Actions → **Deploy** → *Run workflow*, eligiendo qué reconstruir. Hace lo
-mismo por SSH. Requiere cuatro secretos en Settings → Secrets → Actions:
+The workflow fetches the deployment orchestrator from `origin/main` and executes
+that version over SSH. The script then records the currently deployed commits,
+fast-forwards the selected repositories, and rebuilds the requested images. It
+requires these repository secrets:
 
 | Secreto | Valor |
 |---|---|

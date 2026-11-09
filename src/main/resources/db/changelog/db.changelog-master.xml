@@ -124,4 +124,10 @@
     <include file="changes/092_salud_atencion.sql" relativeToChangelogFile="true"/>
     <include file="changes/093_salud_caja.sql" relativeToChangelogFile="true"/>
 
+    <!-- Catalog ingestion migrations keep their original paths because they
+         may already be registered in the shared development database. -->
+    <include file="changes/070_supplier_ingestion.sql" relativeToChangelogFile="true"/>
+    <include file="changes/071_import_category_scope.sql" relativeToChangelogFile="true"/>
+    <include file="changes/072_import_category_tree.sql" relativeToChangelogFile="true"/>
+
 </databaseChangeLog>

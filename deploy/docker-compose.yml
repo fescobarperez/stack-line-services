@@ -1,18 +1,17 @@
-# Stackline — pila de producción.
+# Stackline production stack.
 #
-# Se asume que los tres repos están clonados como hermanos:
-#   ~/stackline/stack-line-services   ← este
+# The four repositories must be siblings:
+#   ~/stackline/stack-line-services
 #   ~/stackline/stack-line-ui
 #   ~/stackline/agents-services
+#   ~/stackline/sites-crawler
 #
-# Arranque:  cd stack-line-services/deploy && docker compose up -d --build
+# Start: cd stack-line-services/deploy && docker compose up -d --build
 
 name: stackline
 
 services:
-  # Postgres en contenedor. Con RDS configurado NO se levanta: queda tras un
-  # perfil para poder volver a él si hace falta, sin borrar el volumen.
-  #   docker compose --profile local-db up -d
+  # PostgreSQL stays behind an opt-in profile because deployed environments use RDS.
   db:
     profiles: ["local-db"]
     image: postgres:16-alpine
@@ -20,14 +19,10 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME:-erp_maya}
       POSTGRES_USER: ${DB_USER:-erp_maya}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?define DB_PASSWORD en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?define DB_PASSWORD in deploy/.env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      # Atado a 127.0.0.1 a propósito: el puerto queda accesible DENTRO del
-      # servidor —lo que necesita un túnel SSH— pero no escucha en la interfaz
-      # pública, así que desde internet sigue sin existir. Poner "5432:5432"
-      # a secas la abriría al mundo entero.
       - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-erp_maya} -d ${DB_NAME:-erp_maya}"]
@@ -38,65 +33,70 @@ services:
   backend:
     build:
       context: ..
-      # En deploy/ y no en la raíz: el plugin de Micronaut, si encuentra un
-      # Dockerfile en la raíz del proyecto, cambia el tipo de su tarea
-      # `dockerfile` y rompe la configuración de build.gradle.kts.
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
-    # Sin depends_on de db: la base es RDS, que vive fuera de este compose.
+    depends_on:
+      crawling:
+        condition: service_healthy
     environment:
-      # Qué ambiente es este servidor. Carga application-<APP_ENV>.properties
-      # además del base. Va aquí y no en el Dockerfile a propósito: así la
-      # imagen es UNA sola y la misma que se probó en staging es la que sube a
-      # producción, cambiando solo cómo se arranca.
       MICRONAUT_ENVIRONMENTS: ${APP_ENV:-dev}
-      # La URL la arma el perfil (APP_ENV) con estos datos y su propio
-      # esquema: dev → stackline_dev, prod → stackline_prod.
-      # DB_HOST apunta a RDS. Para volver al contenedor: DB_HOST=db y
-      # levantar con --profile local-db.
       DB_HOST: ${DB_HOST:-db}
       DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-erp_maya}
       DB_USER: ${DB_USER:-erp_maya}
       DB_PASSWORD: ${DB_PASSWORD:?}
-      JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET en .env}
-      # Crea la empresa y el primer usuario en el arranque inicial, y no hace
-      # nada si la empresa ya existe. Dejarlo encendido es inofensivo; lo que
-      # NO puede quedarse es la contraseña por defecto, de ahí el :? .
+      JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET in deploy/.env}
       ERP_SEED_ENABLED: "${SEED_ENABLED:-true}"
-      ERP_SEED_COMPANY_CODE: ${SEED_COMPANY_CODE:?define SEED_COMPANY_CODE en .env}
+      ERP_SEED_COMPANY_CODE: ${SEED_COMPANY_CODE:?define SEED_COMPANY_CODE in deploy/.env}
       ERP_SEED_COMPANY_NAME: ${SEED_COMPANY_NAME:-Stackline}
-      ERP_SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?define SEED_ADMIN_EMAIL en .env}
-      ERP_SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?define SEED_ADMIN_PASSWORD en .env}
-      # Asistente comercial: el ERP le reenvía /api/agent/turn y le entrega
-      # los avisos de cotización. Misma llave que espera agents-services.
+      ERP_SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?define SEED_ADMIN_EMAIL in deploy/.env}
+      ERP_SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?define SEED_ADMIN_PASSWORD in deploy/.env}
       AGENT_URL: http://agents:8081
-      AGENT_KEY_ERP: ${AGENT_KEY_ERP:?define AGENT_KEY_ERP en .env}
-      # Consola de plataforma → modelos y agentes (/v1/admin/ai). Vacía = la
-      # consola muestra la IA como no configurada.
+      AGENT_KEY_ERP: ${AGENT_KEY_ERP:?define AGENT_KEY_ERP in deploy/.env}
       AGENT_KEY_PLATFORM: ${AGENT_KEY_PLATFORM:-}
-      # Primer dueño de la consola de plataforma (solo si aún no hay operadores).
       PLATFORM_OWNER_EMAIL: ${PLATFORM_OWNER_EMAIL:-}
       PLATFORM_OWNER_NAME: ${PLATFORM_OWNER_NAME:-}
       PLATFORM_OWNER_PASSWORD: ${PLATFORM_OWNER_PASSWORD:-}
-      # URL de /activar en la app; va en los enlaces de invitación.
       PLATFORM_ACTIVATION_URL: ${PLATFORM_ACTIVATION_URL:-}
-      # Tipo de cambio USD → GTQ para el margen en «Uso y costos».
       PLATFORM_FX_USD_GTQ: ${PLATFORM_FX_USD_GTQ:-7.75}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=70}
-    # Tampoco se expone: solo Caddy le habla, por la red interna.
+      CRAWLING_SERVICE_URL: ${CRAWLING_SERVICE_URL:-http://crawling:8090}
+      CRAWLING_STORAGE_ROOT: /var/lib/stackline/crawling
+      AI_MODE: ${AI_MODE:-real}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-gpt-6-luna}
+    volumes:
+      - crawlingdata:/var/lib/stackline/crawling
 
-  # Tino, el agente de ventas (agents-services). Usa la misma base que el ERP
-  # pero en su propio esquema, según el perfil: agents_dev o agents_prod.
-  # El esquema se crea UNA vez a mano antes del primer arranque (ver README).
+  crawling:
+    build:
+      context: ${CRAWLER_CONTEXT:-../../sites-crawler}
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      AI_MODE: ${AI_MODE:-real}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-gpt-6-luna}
+      AI_CHAT_BASE_URL: ${AI_CHAT_BASE_URL:-https://api.openai.com/v1/chat/completions}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?define OPENAI_API_KEY in deploy/.env}
+      CRAWL_STORAGE_ROOT: /var/lib/stackline/crawling
+      CRAWLING_STORAGE_ROOT: /var/lib/stackline/crawling
+    volumes:
+      - crawlingdata:/var/lib/stackline/crawling
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5).read()"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 10s
+
+  # Tino sales assistant. It uses its own schema in the ERP database.
   agents:
     build:
       context: ${AGENTS_CONTEXT:-../../agents-services}
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     depends_on: [backend]
-    # Tope de memoria: comparte máquina con el ERP. La JVM toma su porcentaje
-    # de este límite, no de la RAM total del servidor.
     mem_limit: ${AGENTS_MEM_LIMIT:-768m}
     environment:
       MICRONAUT_ENVIRONMENTS: ${APP_ENV:-dev}
@@ -106,31 +106,19 @@ services:
       DB_USER: ${DB_USER:-erp_maya}
       DB_PASSWORD: ${DB_PASSWORD:?}
       ERP_BASE_URL: http://backend:8080
-      # Doble uso: el ERP la manda al llamar al agente, y el agente la manda
-      # para pedir al ERP un token por empresa (/api/internal/service-token).
       AGENT_KEY_ERP: ${AGENT_KEY_ERP:?}
-      # Llave con scope admin para la consola de plataforma (vía el ERP).
       AGENT_KEY_PLATFORM: ${AGENT_KEY_PLATFORM:-}
-      # Dirección pública (https://<SITE_ADDRESS>): con ella la consola arma el
-      # <script> del widget de chat web. Caddy reenvía /v1/web/* al agente.
       AGENT_PUBLIC_URL: ${AGENT_PUBLIC_URL:-}
-      # Llave del modelo. La base guarda solo el NOMBRE de la variable
-      # (ai_provider.credential_ref); el valor llega por aquí.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # WhatsApp Cloud API. Sin app-secret el webhook se rechaza entero.
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
       WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_STICKERS_ENABLED: ${WHATSAPP_STICKERS_ENABLED:-true}
       JAVA_OPTS: ${AGENTS_JAVA_OPTS:--XX:MaxRAMPercentage=75}
-    # No publica puertos: el backend le habla por la red interna y Caddy solo
-    # le reenvía /webhooks/whatsapp (Meta) y /v1/web/* (widget de chat web).
 
   web:
     build:
-      # El repo se llama stack-line-ui, pero en la máquina de desarrollo la
-      # carpeta es maya-ui. UI_CONTEXT lo resuelve sin editar este archivo.
       context: ${UI_CONTEXT:-../../stack-line-ui}
       dockerfile: Dockerfile
     restart: unless-stopped
@@ -142,12 +130,12 @@ services:
     ports:
       - "80:80"
       - "443:443"
-
     volumes:
-      - caddydata:/data      # certificados: sin esto se re-emiten en cada
-      - caddyconfig:/config  # reinicio y Let's Encrypt tiene límite semanal
+      - caddydata:/data
+      - caddyconfig:/config
 
 volumes:
   pgdata:
   caddydata:
   caddyconfig:
+  crawlingdata:
