@@ -7,8 +7,12 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 @Entity
 @Table(name = "catalog_import_batches")
@@ -29,6 +33,14 @@ public class CatalogImportBatch {
 
     @Column(name = "crawl_run_id")
     private Long crawlRunId;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "category_scope", columnDefinition = "jsonb")
+    private List<Map<String, Object>> categoryScope;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "category_tree", columnDefinition = "jsonb")
+    private List<Map<String, Object>> categoryTree;
 
     @Column(name = "source_type", nullable = false)
     private String sourceType;
@@ -65,6 +77,10 @@ public class CatalogImportBatch {
     public void setSupplierWebsiteId(Long supplierWebsiteId) { this.supplierWebsiteId = supplierWebsiteId; }
     public Long getCrawlRunId() { return crawlRunId; }
     public void setCrawlRunId(Long crawlRunId) { this.crawlRunId = crawlRunId; }
+    public List<Map<String, Object>> getCategoryScope() { return categoryScope; }
+    public void setCategoryScope(List<Map<String, Object>> categoryScope) { this.categoryScope = categoryScope; }
+    public List<Map<String, Object>> getCategoryTree() { return categoryTree; }
+    public void setCategoryTree(List<Map<String, Object>> categoryTree) { this.categoryTree = categoryTree; }
     public String getSourceType() { return sourceType; }
     public void setSourceType(String sourceType) { this.sourceType = sourceType; }
     public String getSourceReference() { return sourceReference; }

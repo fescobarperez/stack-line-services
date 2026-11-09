@@ -95,6 +95,7 @@ public class CatalogImportService {
         batch.setSourceType(sourceType);
         batch.setSourceReference(request.sourceReference());
         batch.setCrawlRunId(request.crawlRunId());
+        batch.setCategoryScope(toScope(request.categoryScope()));
         batch.setStatus("preview");
         CatalogImportBatch saved = batches.save(batch);
         for (int index = 0; index < request.items().size(); index++) {
@@ -119,11 +120,40 @@ public class CatalogImportService {
     }
 
     @Transactional
+    public CatalogImportDtos.BatchResponse saveCategorySelection(Long supplierWebsiteId,
+                                                                   List<CatalogImportDtos.CategoryScopeItem> scope,
+                                                                   List<CatalogImportDtos.CategoryTreeItem> tree) {
+        Long companyId = tenant.getCompanyId();
+        var website = websites.findByIdAndCompanyId(supplierWebsiteId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Supplier website not found"));
+        if (scope == null || scope.isEmpty() || tree == null || tree.isEmpty()) {
+            throw new IllegalStateException("A category selection must include at least one selected category and a category tree");
+        }
+        CatalogImportBatch batch = batches
+                .findFirstByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                        companyId, supplierWebsiteId, "crawl", "category_selection")
+                .orElseGet(CatalogImportBatch::new);
+        batch.setCompanyId(companyId);
+        batch.setSupplierId(website.getSupplierId());
+        batch.setSupplierWebsiteId(supplierWebsiteId);
+        batch.setSourceType("crawl");
+        batch.setSourceReference(website.getBaseUrl());
+        batch.setCategoryScope(toScope(scope));
+        batch.setCategoryTree(toTree(tree));
+        batch.setStatus("category_selection");
+        CatalogImportBatch saved = batches.save(batch);
+        return toResponse(saved, List.of(), companyId);
+    }
+
+    @Transactional
     public List<CatalogImportDtos.PendingBatchResponse> listPending(Long supplierWebsiteId) {
         Long companyId = tenant.getCompanyId();
-        return batches.findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
-                        companyId, supplierWebsiteId, "crawl", "preview")
-                .stream()
+        List<CatalogImportBatch> pending = new ArrayList<>(batches
+                .findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                        companyId, supplierWebsiteId, "crawl", "preview"));
+        pending.addAll(batches.findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                companyId, supplierWebsiteId, "crawl", "category_selection"));
+        return pending.stream()
                 .map(batch -> {
                     int itemCount = (int) items.findByCompanyIdAndBatchIdOrderByRowNumberAsc(companyId, batch.getId())
                             .stream()
@@ -131,7 +161,8 @@ public class CatalogImportService {
                             .count();
                     return new CatalogImportDtos.PendingBatchResponse(
                             batch.getId(), batch.getSupplierWebsiteId(), batch.getCrawlRunId(),
-                            batch.getSourceReference(), batch.getStatus(), itemCount);
+                            batch.getSourceReference(), batch.getStatus(), itemCount,
+                            toScopeResponse(batch.getCategoryScope()), toTreeResponse(batch.getCategoryTree(), batch.getCategoryScope()));
                 })
                 .toList();
     }
@@ -147,8 +178,8 @@ public class CatalogImportService {
     @Transactional
     public void delete(Long id) {
         CatalogImportBatch batch = findBatch(id);
-        if (!"preview".equals(batch.getStatus())) {
-            throw new IllegalStateException("Solo se pueden eliminar propuestas pendientes");
+        if (!"preview".equals(batch.getStatus()) && !"category_selection".equals(batch.getStatus())) {
+            throw new IllegalStateException("Only pending catalog proposals or category selections can be deleted");
         }
         // catalog_import_items tiene ON DELETE CASCADE sobre batch_id.
         batches.delete(batch);
@@ -438,6 +469,75 @@ public class CatalogImportService {
         catch (NumberFormatException ignored) { return null; }
     }
 
+    private static List<Map<String, Object>> toScope(List<CatalogImportDtos.CategoryScopeItem> scope) {
+        if (scope == null || scope.isEmpty()) return null;
+        return scope.stream().map(item -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("id", item.id());
+            value.put("url", item.url());
+            value.put("path", item.path() == null ? List.of() : item.path());
+            return value;
+        }).toList();
+    }
+
+    private static List<Map<String, Object>> toTree(List<CatalogImportDtos.CategoryTreeItem> tree) {
+        return tree.stream().map(item -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("id", item.id());
+            value.put("name", item.name());
+            value.put("url", item.url());
+            value.put("parentId", item.parentId());
+            return value;
+        }).toList();
+    }
+
+    private static String categoryName(Map<String, Object> item) {
+        String name = text(item, "name");
+        String url = text(item, "url");
+        if (!name.isBlank() && !name.equalsIgnoreCase("Lista de precios GTQ predeterminada")
+                && !name.startsWith("/shop/category/")) return name;
+        String path = url.split("\\?", 2)[0];
+        int slash = path.lastIndexOf('/');
+        String slug = slash >= 0 ? path.substring(slash + 1) : path;
+        slug = slug.replaceFirst("-\\d+$", "");
+        return java.util.Arrays.stream(slug.split("-"))
+                .filter(part -> !part.isBlank())
+                .map(part -> Character.toUpperCase(part.charAt(0)) + part.substring(1))
+                .collect(java.util.stream.Collectors.joining(" "));
+    }
+
+    private static List<CatalogImportDtos.CategoryTreeItem> toTreeResponse(List<Map<String, Object>> tree,
+                                                                            List<Map<String, Object>> scope) {
+        if (tree != null && !tree.isEmpty()) {
+            return tree.stream().map(item -> new CatalogImportDtos.CategoryTreeItem(
+                    text(item, "id"), categoryName(item), text(item, "url"), text(item, "parentId"))).toList();
+        }
+        if (scope == null || scope.isEmpty()) return List.of();
+        List<List<String>> paths = scope.stream().map(item -> strings(item.get("path"))).toList();
+        return scope.stream().map(item -> {
+            List<String> path = strings(item.get("path"));
+            String parentId = null;
+            if (path.size() > 1) {
+                List<String> parentPath = path.subList(0, path.size() - 1);
+                for (int index = 0; index < scope.size(); index++) {
+                    if (paths.get(index).equals(parentPath)) {
+                        parentId = text(scope.get(index), "id");
+                        break;
+                    }
+                }
+            }
+            return new CatalogImportDtos.CategoryTreeItem(
+                    text(item, "id"), path.isEmpty() ? text(item, "id") : path.get(path.size() - 1),
+                    text(item, "url"), parentId);
+        }).toList();
+    }
+
+    private static List<CatalogImportDtos.CategoryScopeItem> toScopeResponse(List<Map<String, Object>> scope) {
+        if (scope == null) return List.of();
+        return scope.stream().map(item -> new CatalogImportDtos.CategoryScopeItem(
+                text(item, "id"), text(item, "url"), strings(item.get("path")))).toList();
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> map(Object value) {
         return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
@@ -526,6 +626,7 @@ public class CatalogImportService {
         }).toList();
         return new CatalogImportDtos.BatchResponse(batch.getId(), batch.getSupplierId(),
                 batch.getSupplierWebsiteId(), batch.getCrawlRunId(), batch.getSourceType(),
-                batch.getSourceReference(), batch.getStatus(), responseRows.size(), responseRows);
+                batch.getSourceReference(), batch.getStatus(), responseRows.size(),
+                toScopeResponse(batch.getCategoryScope()), toTreeResponse(batch.getCategoryTree(), batch.getCategoryScope()), responseRows);
     }
 }

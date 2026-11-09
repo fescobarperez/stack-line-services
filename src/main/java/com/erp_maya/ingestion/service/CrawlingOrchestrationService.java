@@ -72,7 +72,7 @@ public class CrawlingOrchestrationService {
             throw new IllegalStateException("El crawling está desactivado para este sitio");
         }
         CrawlDtos.StartRequest safeRequest = request == null
-                ? new CrawlDtos.StartRequest(null, null, null, null)
+                ? new CrawlDtos.StartRequest(null, null, null, null, null)
                 : request;
         String key = companyId + ":" + websiteId;
         String idempotencyKey = blankToNull(safeRequest.idempotencyKey());
@@ -93,6 +93,14 @@ public class CrawlingOrchestrationService {
                 companyId, websiteId, "crawl", siteUrl, "preview")) {
             throw new IllegalStateException("La página ya tiene una propuesta de crawling pendiente; apruébala o recházala antes de iniciar otra corrida para esa página");
         }
+        var categorySelection = batches.findFirstByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                companyId, websiteId, "crawl", "category_selection");
+        if (categorySelection.isPresent()) {
+            if (safeRequest.categoryScope() == null || safeRequest.categoryScope().isEmpty()) {
+                throw new IllegalStateException("A pending category selection exists for this supplier website; finish or delete it before starting another crawl");
+            }
+            batches.delete(categorySelection.get());
+        }
 
         String siteKey = siteKey(website);
         SopDocument sop = sops.findActive(siteKey)
@@ -108,6 +116,107 @@ public class CrawlingOrchestrationService {
         if (idempotencyKey != null) idempotent.put(key + ":" + idempotencyKey, saved.getId());
         executor.submit(() -> execute(saved.getId(), companyId, website, safeRequest, sop, key));
         return response(saved);
+    }
+
+    public CrawlDtos.DiscoveryResponse startDiscovery(Long websiteId) {
+        SupplierWebsite website = website(websiteId);
+        boolean hasPendingProposal = !batches.findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                tenant.getCompanyId(), websiteId, "crawl", "preview").isEmpty();
+        boolean hasPendingCategorySelection = !batches.findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+                tenant.getCompanyId(), websiteId, "crawl", "category_selection").isEmpty();
+        if (hasPendingProposal || hasPendingCategorySelection) {
+            throw new IllegalStateException("A pending catalog proposal or category selection already exists for this supplier website; approve, reject, or delete it before starting another crawl");
+        }
+        String siteKey = siteKey(website);
+        SopDocument sop = sops.findActive(siteKey)
+                .orElseThrow(() -> new IllegalStateException("No hay SOP activo para el sitio " + siteKey));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("run_id", "discover-" + java.util.UUID.randomUUID());
+        payload.put("site_key", siteKey);
+        payload.put("site_url", website.getBaseUrl());
+        payload.put("sop", sop.instructionsMarkdown() + "\n\n" + sop.rulesJson());
+        payload.put("model", "gpt-6-luna");
+        payload.put("build_root", buildRoot(tenant.getCompanyId(), website).toString());
+        Map<String, Object> started = crawler.startDiscovery(payload);
+        return new CrawlDtos.DiscoveryResponse(String.valueOf(started.get("run_id")),
+                String.valueOf(started.getOrDefault("status", "RUNNING")), List.of(), Map.of(), null);
+    }
+
+    public CrawlDtos.DiscoveryResponse discovery(Long websiteId, String runId) {
+        website(websiteId);
+        if (runId == null || !runId.startsWith("discover-")) {
+            throw new ResourceNotFoundException("Descubrimiento " + runId + " no encontrado");
+        }
+        Map<String, Object> state = crawler.state(runId);
+        String status = String.valueOf(state.getOrDefault("status", "RUNNING"));
+        if ("RUNNING".equalsIgnoreCase(status)) {
+            return new CrawlDtos.DiscoveryResponse(runId, "RUNNING", List.of(), Map.of(), null);
+        }
+        Map<String, Object> result = map(state.get("result"));
+        if (!"COMPLETED".equals(status)) {
+            Map<String, Object> error = map(result.get("error"));
+            return new CrawlDtos.DiscoveryResponse(runId, "FAILED", List.of(), Map.of(),
+                    text(error.get("message"), "No se pudo descubrir las categorías"));
+        }
+        List<CrawlDtos.CategoryNode> nodes = new ArrayList<>();
+        if (result.get("categories") instanceof List<?> values) {
+            for (Object value : values) {
+                Map<String, Object> item = map(value);
+                nodes.add(new CrawlDtos.CategoryNode(text(item.get("id"), null), categoryName(item),
+                        text(item.get("url"), null), text(item.get("parentId"), null),
+                        integer(item.get("depth")), Boolean.TRUE.equals(item.get("hasChildren"))));
+            }
+        }
+        return new CrawlDtos.DiscoveryResponse(runId, "COMPLETED", nodes, map(result.get("metrics")), null);
+    }
+
+    private static String categoryName(Map<String, Object> item) {
+        String name = text(item.get("name"), "");
+        String url = text(item.get("url"), "");
+        if (!name.isBlank() && !name.equalsIgnoreCase("Lista de precios GTQ predeterminada")
+                && !name.startsWith("/shop/category/")) return name;
+        String path = url.split("\\?", 2)[0];
+        int slash = path.lastIndexOf('/');
+        String slug = slash >= 0 ? path.substring(slash + 1) : path;
+        slug = slug.replaceFirst("-\\d+$", "");
+        return java.util.Arrays.stream(slug.split("-"))
+                .filter(part -> !part.isBlank())
+                .map(part -> Character.toUpperCase(part.charAt(0)) + part.substring(1))
+                .collect(java.util.stream.Collectors.joining(" "));
+    }
+
+    private SupplierWebsite website(Long websiteId) {
+        return websites.findByIdAndCompanyId(websiteId, tenant.getCompanyId())
+                .orElseThrow(() -> new ResourceNotFoundException("Sitio del proveedor " + websiteId + " no encontrado"));
+    }
+
+    private static List<CatalogImportDtos.CategoryScopeItem> scopeItems(CrawlDtos.StartRequest request) {
+        if (request.categoryScope() == null || request.categoryScope().isEmpty()) return null;
+        return request.categoryScope().stream()
+                .filter(item -> item != null && item.url() != null && !item.url().isBlank())
+                .map(item -> new CatalogImportDtos.CategoryScopeItem(item.id(), item.url(), item.path()))
+                .toList();
+    }
+
+    private static List<Map<String, Object>> scope(CrawlDtos.StartRequest request) {
+        if (request.categoryScope() == null || request.categoryScope().isEmpty()) return null;
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (CrawlDtos.ScopeItem item : request.categoryScope()) {
+            if (item == null || item.url() == null || item.url().isBlank()) continue;
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("id", item.id());
+            entry.put("url", item.url().trim());
+            entry.put("path", item.path() == null ? List.of() : item.path());
+            items.add(entry);
+        }
+        if (items.isEmpty()) throw new IllegalStateException("El alcance de categorías no contiene URLs válidas");
+        return items;
+    }
+
+    public CatalogImportDtos.BatchResponse saveCategorySelection(Long websiteId,
+                                                                   List<CatalogImportDtos.CategoryScopeItem> scope,
+                                                                   List<CatalogImportDtos.CategoryTreeItem> tree) {
+        return imports.saveCategorySelection(websiteId, scope, tree);
     }
 
     public CrawlDtos.Response get(Long runId) {
@@ -130,6 +239,8 @@ public class CrawlingOrchestrationService {
             payload.put("sop", sop.instructionsMarkdown() + "\n\n" + sop.rulesJson());
             payload.put("user_prompt", request.userPrompt());
             payload.put("max_pages", request.maxPages());
+            List<Map<String, Object>> scope = scope(request);
+            if (scope != null) payload.put("category_scope", scope);
             payload.put("model", "gpt-6-luna");
             payload.put("build_root", buildRoot(companyId, website).toString());
 
@@ -149,10 +260,11 @@ public class CrawlingOrchestrationService {
                 List<CatalogImportDtos.Row> rows = rows(result);
                 CatalogImportDtos.PreviewRequest preview = new CatalogImportDtos.PreviewRequest(
                         website.getSupplierId(), website.getId(), "crawl", siteUrl,
-                        request.userPrompt(), rows, runId);
+                        request.userPrompt(), rows, runId, scopeItems(request));
                 CatalogImportDtos.BatchResponse batch = imports.previewForCompany(companyId, preview);
                 Map<String, Object> report = new LinkedHashMap<>(result);
                 report.put("importBatchId", batch.id());
+                if (scope != null) report.put("categoryScope", scope);
                 run.setQualityReport(report);
                 run.setStatus("completed");
             } else if ("QUALITY_FAILED".equals(finalStatus)) {

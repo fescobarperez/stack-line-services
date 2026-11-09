@@ -20,7 +20,18 @@ public final class CatalogImportDtos {
                                  String sourceReference,
                                  String userPrompt,
                                  @NotNull @Valid List<Row> items,
-                                 Long crawlRunId) {}
+                                 Long crawlRunId,
+                                 List<CategoryScopeItem> categoryScope) {}
+
+    @Serdeable
+    public record CategoryScopeItem(String id, String url, List<String> path) {}
+
+    @Serdeable
+    public record CategoryTreeItem(String id, String name, String url, String parentId) {}
+
+    @Serdeable
+    public record CategorySelectionRequest(@NotNull @Valid List<CategoryScopeItem> categoryScope,
+                                           @NotNull @Valid List<CategoryTreeItem> categoryTree) {}
 
     @Serdeable
     public record Row(@NotBlank String name,
@@ -57,11 +68,13 @@ public final class CatalogImportDtos {
     @Serdeable
     public record BatchResponse(Long id, Long supplierId, Long supplierWebsiteId, Long crawlRunId,
                                 String sourceType, String sourceReference, String status, int itemCount,
+                                List<CategoryScopeItem> categoryScope, List<CategoryTreeItem> categoryTree,
                                 List<ItemResponse> items) {}
 
     @Serdeable
     public record PendingBatchResponse(Long id, Long supplierWebsiteId, Long crawlRunId,
-                                       String sourceReference, String status, int itemCount) {}
+                                       String sourceReference, String status, int itemCount,
+                                       List<CategoryScopeItem> categoryScope, List<CategoryTreeItem> categoryTree) {}
 
     @Serdeable
     public record ItemResponse(Long id, Integer rowNumber, String sourceProductName, String action, Long targetProductId,

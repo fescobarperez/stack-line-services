@@ -12,7 +12,19 @@ public final class CrawlDtos {
 
     @Serdeable
     public record StartRequest(List<String> categoryUrls, String userPrompt, Integer maxPages,
-                               String idempotencyKey) {}
+                               String idempotencyKey, List<ScopeItem> categoryScope) {}
+
+    /** Categoría externa elegida: URL de origen y ruta de nombres desde la raíz. */
+    @Serdeable
+    public record ScopeItem(String id, String url, List<String> path) {}
+
+    @Serdeable
+    public record CategoryNode(String id, String name, String url, String parentId,
+                               Integer depth, Boolean hasChildren) {}
+
+    @Serdeable
+    public record DiscoveryResponse(String runId, String status, List<CategoryNode> categories,
+                                    Map<String, Object> metrics, String error) {}
 
     @Serdeable
     public record Response(Long crawlRunId, Long importBatchId, String status,

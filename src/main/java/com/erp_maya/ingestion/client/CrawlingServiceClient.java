@@ -3,6 +3,8 @@ package com.erp_maya.ingestion.client;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Singleton;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
@@ -16,6 +18,18 @@ import java.util.function.Consumer;
 /** Cliente del servicio Python; no ejecuta crawler dentro de la JVM. */
 @Singleton
 public class CrawlingServiceClient {
+    private static final Logger LOG = LoggerFactory.getLogger(CrawlingServiceClient.class);
+
+    static final class CrawlerConflictException extends IllegalStateException {
+        private final Map<String, Object> response;
+
+        CrawlerConflictException(Map<String, Object> response) {
+            super("El servicio de crawling respondió HTTP 409: " + response);
+            this.response = response;
+        }
+
+        Map<String, Object> response() { return response; }
+    }
     private final CrawlingClientProperties properties;
     private final ObjectMapper mapper;
     private final HttpClient http;
@@ -59,6 +73,24 @@ public class CrawlingServiceClient {
         throw new IllegalStateException("El servicio de crawling excedió el tiempo máximo de espera");
     }
 
+    /** Inicia el descubrimiento asíncrono de categorías; el estado se consulta con {@link #state}. */
+    public Map<String, Object> startDiscovery(Map<String, Object> payload) {
+        try {
+            return post("/v1/discover", payload);
+        } catch (CrawlerConflictException conflict) {
+            Object activeRunId = conflict.response().get("active_run_id");
+            if (activeRunId != null && !String.valueOf(activeRunId).isBlank()) {
+                LOG.info("reusing active discovery run_id={}", activeRunId);
+                return Map.of("run_id", String.valueOf(activeRunId), "status", "RUNNING", "reused", true);
+            }
+            throw conflict;
+        }
+    }
+
+    public Map<String, Object> state(String runId) {
+        return get("/v1/crawl/" + runId);
+    }
+
     private Map<String, Object> post(String path, Map<String, Object> payload) {
         try {
             HttpRequest request = HttpRequest.newBuilder(URI.create(properties.getServiceUrl() + path))
@@ -67,7 +99,12 @@ public class CrawlingServiceClient {
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)))
                     .build();
             HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            LOG.info("crawling POST {} -> HTTP {}", path, response.statusCode());
             if (response.statusCode() >= 300) {
+                if (response.statusCode() == 409) {
+                    Map<String, Object> conflict = mapper.readValue(response.body(), new TypeReference<>() {});
+                    throw new CrawlerConflictException(conflict);
+                }
                 throw new IllegalStateException("El servicio de crawling respondió HTTP " + response.statusCode() + ": " + response.body());
             }
             return mapper.readValue(response.body(), new TypeReference<>() {});
@@ -85,7 +122,12 @@ public class CrawlingServiceClient {
                     .timeout(Duration.ofSeconds(30))
                     .GET().build();
             HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            LOG.info("crawling GET {} -> HTTP {} bodyBytes={}", path, response.statusCode(), response.body().length());
             if (response.statusCode() >= 300) {
+                if (response.statusCode() == 409) {
+                    Map<String, Object> conflict = mapper.readValue(response.body(), new TypeReference<>() {});
+                    throw new CrawlerConflictException(conflict);
+                }
                 throw new IllegalStateException("El servicio de crawling respondió HTTP " + response.statusCode() + ": " + response.body());
             }
             return mapper.readValue(response.body(), new TypeReference<>() {});

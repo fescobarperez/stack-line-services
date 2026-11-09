@@ -12,6 +12,8 @@ public interface CatalogImportBatchRepository extends JpaRepository<CatalogImpor
     List<CatalogImportBatch> findByCompanyIdOrderByCreatedAtDesc(Long companyId);
     List<CatalogImportBatch> findByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
             Long companyId, Long supplierWebsiteId, String sourceType, String status);
+    Optional<CatalogImportBatch> findFirstByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndStatusOrderByCreatedAtDesc(
+            Long companyId, Long supplierWebsiteId, String sourceType, String status);
     Optional<CatalogImportBatch> findFirstByCompanyIdAndCrawlRunId(Long companyId, Long crawlRunId);
     boolean existsByCompanyIdAndSupplierWebsiteIdAndSourceTypeAndSourceReferenceAndStatus(
             Long companyId, Long supplierWebsiteId, String sourceType, String sourceReference, String status);
