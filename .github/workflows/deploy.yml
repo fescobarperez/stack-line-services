@@ -74,7 +74,7 @@ jobs:
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              'set -o pipefail; cd "$HOME/stackline/stack-line-services/deploy"; echo "=== backend logs for catalog batch 7 ==="; docker compose logs --no-color --since "2 hours ago" backend 2>&1 | grep -Ei "catalog-import|CatalogImport|/apply|500|ERROR|Exception|constraint|duplicate|violat|batch.?7" | tail -n 300 || true; echo "=== backend container status ==="; docker compose ps backend'
+              'set -eu; cd "$HOME/stackline/stack-line-services/deploy"; echo "=== last backend logs ==="; docker compose logs --no-color --timestamps --since "24 hours ago" backend 2>&1 | tail -n 500; echo "=== backend container status ==="; docker compose ps backend'
 
       - name: Cancel stale image builds
         if: inputs.target == 'cancel-builds'
