@@ -5,6 +5,22 @@ from pathlib import Path
 run_id = "discover-6af1001b-58d4-4a68-85fe-1f4fd43e76f4"
 root = Path(os.getenv("CRAWL_STORAGE_ROOT", "/var/lib/stackline/crawling"))
 print(f"storage_root={root}")
+build_root = root / "clients/1/suppliers/1/sites/1/build"
+print(f"build_root={build_root}")
+for relative in ("run-state.json", "results/categories-result.json", "results/crawl-result.json", "logs/agent-transcript.jsonl", "workspace/crawl.py"):
+    path = build_root / relative
+    print(f"live_artifact_{relative.replace('/', '_')}_exists={path.is_file()}")
+    if path.is_file():
+        try:
+            if relative.endswith(".json"):
+                print(f"live_artifact_{relative.replace('/', '_')}={path.read_text(encoding='utf-8')[:8000]}")
+            elif relative.endswith(".jsonl"):
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                print(f"live_transcript_lines={len(lines)}")
+                for line in lines[-100:]:
+                    print("LIVE_TRANSCRIPT " + line[:4000])
+        except OSError as error:
+            print(f"artifact_read_error={type(error).__name__}: {error}")
 
 matches = []
 for registry in root.glob(".jobs/*.json"):
