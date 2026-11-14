@@ -74,7 +74,7 @@ jobs:
               -o ServerAliveInterval=30 \
               -o ServerAliveCountMax=10 \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-              'set -eu; cd "$HOME/stackline/stack-line-services/deploy"; echo "=== last backend logs ==="; docker compose logs --no-color --timestamps --since "24 hours ago" backend 2>&1 | tail -n 500; echo "=== backend container status ==="; docker compose ps backend'
+              'set -eu; cd "$HOME/stackline/stack-line-services/deploy"; echo "=== last backend logs ==="; docker compose logs --no-color --timestamps --since "24h" backend 2>&1 | tail -n 500; echo "=== backend container status ==="; docker compose ps backend'
 
       - name: Cancel stale image builds
         if: inputs.target == 'cancel-builds'
