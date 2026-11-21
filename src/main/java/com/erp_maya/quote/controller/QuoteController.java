@@ -179,6 +179,21 @@ public class QuoteController {
         return charges.getSummary(id);
     }
 
+    /**
+     * Vista previa de precios al cliente para productos que aún no están en
+     * una cotización (carrito con productos en espera). No guarda nada.
+     */
+    @Post("/client-prices/preview")
+    public QuoteChargeDtos.PreviewPrices previewClientPrices(@Body QuoteChargeDtos.PreviewRequest request) {
+        return charges.previewClientPrices(service.conPrecioPorMedida(request));
+    }
+
+    /** Precios al cliente con los cargos dentro de cada producto (carrito del chat web). */
+    @Get("/{id}/client-prices")
+    public QuoteChargeDtos.ClientPrices clientPrices(Long id) {
+        return charges.getClientPrices(id);
+    }
+
     @Post("/{id}/charges")
     @Status(HttpStatus.CREATED)
     public QuoteChargeDtos.Summary addCharge(Long id, @Valid @Body QuoteChargeDtos.Request request) {

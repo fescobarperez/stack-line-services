@@ -127,6 +127,11 @@ public class ProductService {
         p.setMinStock(BigDecimal.ZERO);
         p.setPurchaseFactor(BigDecimal.ONE);
         p.setUnit("Unidad");
+        // price y cost son NOT NULL en la tabla: el DEFAULT 0 solo aplica si la
+        // columna se omite, y el INSERT la manda en null. Sin precio = 0; el
+        // asesor se lo pone al aprobarlo y la linea queda «por cotizar».
+        p.setPrice(BigDecimal.ZERO);
+        p.setCost(BigDecimal.ZERO);
         p.setStatus("active");
         p.setCategory(categoriaPorNombre(companyId, req.category()));
         p.setHeight(medida(req.height(), "alto"));

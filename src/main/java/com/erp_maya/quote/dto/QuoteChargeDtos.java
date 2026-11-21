@@ -91,4 +91,43 @@ public final class QuoteChargeDtos {
                           BigDecimal profitBase, String profitBaseMode,
                           /** Lo que movió el redondeo automático del total (0 sin redondeo). */
                           BigDecimal roundingAdjustment) {}
+
+    /**
+     * Precios tal como los ve el cliente: ganancia, gastos operativos, cargos,
+     * ajuste y redondeo ya van DENTRO del precio de cada producto, repartidos
+     * en proporción a su precio. Las líneas suman exactamente el subtotal.
+     */
+    @Serdeable
+    public record ClientPrices(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<ClientLine> lines) {}
+
+    /** Una línea con su parte de los cargos. Null en las ocultas al cliente; 0 en las que cotiza un asesor. */
+    @Serdeable
+    public record ClientLine(Long itemId, BigDecimal unitPrice, BigDecimal lineTotal) {}
+
+    /** Productos aún sin cotización (en espera): `key` lo pone quien pregunta; `lineTotal` = cantidad × precio de lista. */
+    @Serdeable
+    public record PreviewRequest(List<PreviewLine> lines) {}
+
+    /**
+     * Con `productId` y medidas, el ERP aplica el precio por medida como al
+     * cotizar (fuera de la tolerancia, la línea queda en 0: la cotiza un asesor).
+     */
+    @Serdeable
+    public record PreviewLine(String key, BigDecimal quantity, BigDecimal lineTotal,
+                              @io.micronaut.core.annotation.Nullable Long productId,
+                              @io.micronaut.core.annotation.Nullable BigDecimal height,
+                              @io.micronaut.core.annotation.Nullable BigDecimal width,
+                              @io.micronaut.core.annotation.Nullable BigDecimal depth) {
+        public PreviewLine(String key, BigDecimal quantity, BigDecimal lineTotal) {
+            this(key, quantity, lineTotal, null, null, null, null);
+        }
+    }
+
+    /** Vista previa: lo que costaría con los cargos, ganancia, IVA y redondeo de la empresa. */
+    @Serdeable
+    public record PreviewPrices(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<PreviewPrice> lines) {}
+
+    /** `review`: la medida se sale de la tolerancia y el precio lo pone un asesor. */
+    @Serdeable
+    public record PreviewPrice(String key, BigDecimal unitPrice, BigDecimal lineTotal, boolean review) {}
 }

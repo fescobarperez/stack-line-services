@@ -18,6 +18,7 @@ import com.erp_maya.project.repository.ProjectRepositories.Projects;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteHistory;
 import com.erp_maya.quote.domain.QuoteItem;
+import com.erp_maya.quote.dto.QuoteChargeDtos;
 import com.erp_maya.quote.dto.QuoteDtos;
 import com.erp_maya.quote.repository.QuoteHistoryRepository;
 import com.erp_maya.quote.repository.QuoteRepository;
@@ -717,6 +718,40 @@ public class QuoteService {
             throw new IllegalStateException("Presentación de precios inválida: " + valor + " (detailed o global)");
         }
         return Optional.of(v);
+    }
+
+    /**
+     * Vista previa del carrito: a cada producto en espera con medidas le
+     * aplica el precio por medida, igual que {@link #precioConMedidas} al
+     * cotizar. Fuera de la tolerancia queda en 0 (lo cotiza un asesor). No guarda nada.
+     */
+    public QuoteChargeDtos.PreviewRequest conPrecioPorMedida(QuoteChargeDtos.PreviewRequest req) {
+        if (req == null || req.lines() == null) return req;
+        Long companyId = tenant.getCompanyId();
+        BigDecimal fijo = porcentaje(companyId, "quotes.size_fixed_pct", MEDIDA_FIJO_DEFECTO);
+        BigDecimal tolerancia = porcentaje(companyId, "quotes.size_tolerance_pct", MEDIDA_TOLERANCIA_DEFECTO);
+        List<QuoteChargeDtos.PreviewLine> out = new java.util.ArrayList<>();
+        for (QuoteChargeDtos.PreviewLine l : req.lines()) {
+            boolean conMedidas = l.height() != null || l.width() != null || l.depth() != null;
+            Product p = l.productId() == null || !conMedidas ? null
+                    : products.findByIdAndCompanyId(l.productId(), companyId).orElse(null);
+            if (p == null || p.getPrice() == null) { out.add(l); continue; }
+            QuoteItem i = new QuoteItem();
+            i.setBaseHeight(p.getHeight()); i.setBaseWidth(p.getWidth()); i.setBaseDepth(p.getDepth());
+            // Lo que no se pidió se queda como en el catálogo.
+            i.setHeight(l.height() != null ? l.height() : p.getHeight());
+            i.setWidth(l.width() != null ? l.width() : p.getWidth());
+            i.setDepth(l.depth() != null ? l.depth() : p.getDepth());
+            if (!medidaEspecial(i)) { out.add(l); continue; }
+            PrecioMedida r = calcularPorMedida(p.getPrice(),
+                    new BigDecimal[]{i.getBaseHeight(), i.getBaseWidth(), i.getBaseDepth()},
+                    new BigDecimal[]{i.getHeight(), i.getWidth(), i.getDepth()}, fijo, tolerancia);
+            BigDecimal cantidad = l.quantity() == null ? BigDecimal.ONE : l.quantity();
+            out.add(new QuoteChargeDtos.PreviewLine(l.key(), l.quantity(),
+                    r.precio().multiply(cantidad).setScale(2, RoundingMode.HALF_UP),
+                    l.productId(), l.height(), l.width(), l.depth()));
+        }
+        return new QuoteChargeDtos.PreviewRequest(out);
     }
 
     /** Parte fija por defecto del precio por medida (mano de obra, herrajes). */

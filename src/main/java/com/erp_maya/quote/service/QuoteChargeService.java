@@ -8,6 +8,7 @@ import com.erp_maya.settings.repository.CompanySettingRepository;
 import com.erp_maya.quote.domain.ChargeCategory;
 import com.erp_maya.quote.domain.Quote;
 import com.erp_maya.quote.domain.QuoteCharge;
+import com.erp_maya.quote.domain.QuoteItem;
 import com.erp_maya.quote.dto.QuoteChargeDtos;
 import com.erp_maya.quote.repository.ChargeCategoryRepository;
 import com.erp_maya.quote.repository.QuoteChargeRepository;
@@ -99,6 +100,118 @@ public class QuoteChargeService {
         Long companyId = tenant.getCompanyId();
         requireQuote(quoteId, companyId);
         return recompute(quoteId, companyId);
+    }
+
+    /**
+     * Precios al cliente con todos los cargos dentro de cada producto (el
+     * carrito del chat web). Recalcula igual que el PDF, para que coincidan.
+     */
+    @Transactional
+    public QuoteChargeDtos.ClientPrices getClientPrices(Long quoteId) {
+        Long companyId = tenant.getCompanyId();
+        requireQuote(quoteId, companyId);
+        QuoteChargeDtos.Summary r = recompute(quoteId, companyId);
+        Quote quote = quotes.findByIdAndCompanyId(quoteId, companyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Cotización " + quoteId + " no encontrada"));
+        return new QuoteChargeDtos.ClientPrices(r.adjustedBase(), r.tax(), r.total(),
+                preciosAlCliente(quote.getItems(), r.adjustedBase()));
+    }
+
+    /**
+     * Reparte el subtotal (base del IVA, con ganancia, gastos, cargos, ajuste
+     * y redondeo) entre las líneas visibles con precio, en proporción a su
+     * precio. Así cada producto lleva su parte y las líneas suman el subtotal:
+     * el cliente no ve un precio y un subtotal que no cuadran. La última línea
+     * absorbe los centavos. Ocultas: null. Sin precio (las cotiza un asesor): 0.
+     */
+    static List<QuoteChargeDtos.ClientLine> preciosAlCliente(List<QuoteItem> items, BigDecimal subtotal) {
+        List<BigDecimal> montos = items.stream()
+                .map(i -> Boolean.FALSE.equals(i.getShowToClient()) ? null : i.getLineTotal())
+                .toList();
+        List<BigDecimal> partes = repartir(montos, subtotal);
+        List<QuoteChargeDtos.ClientLine> out = new ArrayList<>();
+        for (int k = 0; k < items.size(); k++) {
+            QuoteItem i = items.get(k);
+            if (Boolean.FALSE.equals(i.getShowToClient())) {
+                out.add(new QuoteChargeDtos.ClientLine(i.getId(), null, null));
+                continue;
+            }
+            out.add(new QuoteChargeDtos.ClientLine(i.getId(), unitario(partes.get(k), i.getQuantity()), partes.get(k)));
+        }
+        return out;
+    }
+
+    /**
+     * Reparte `objetivo` entre los montos positivos en proporción a cada uno;
+     * la última parte absorbe los centavos. Null o cero reciben 0.
+     */
+    static List<BigDecimal> repartir(List<BigDecimal> montos, BigDecimal objetivo) {
+        BigDecimal base = montos.stream().filter(m -> m != null && m.signum() > 0).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal meta = objetivo == null ? base : objetivo;
+        int ultima = -1;
+        for (int k = 0; k < montos.size(); k++) if (montos.get(k) != null && montos.get(k).signum() > 0) ultima = k;
+        List<BigDecimal> out = new ArrayList<>();
+        BigDecimal acumulado = BigDecimal.ZERO;
+        for (int k = 0; k < montos.size(); k++) {
+            BigDecimal m = montos.get(k);
+            if (m == null || m.signum() <= 0) { out.add(BigDecimal.ZERO.setScale(2)); continue; }
+            BigDecimal valor = money(k == ultima ? meta.subtract(acumulado)
+                    : m.multiply(meta).divide(base, 2, RoundingMode.HALF_UP));
+            acumulado = acumulado.add(valor);
+            out.add(valor);
+        }
+        return out;
+    }
+
+    private static BigDecimal unitario(BigDecimal total, BigDecimal cantidad) {
+        return cantidad != null && cantidad.signum() > 0 ? total.divide(cantidad, 2, RoundingMode.HALF_UP) : total;
+    }
+
+    /**
+     * Precios al cliente ANTES de que exista la cotización (el carrito con
+     * productos en espera): aplica lo mismo que tendrá la cotización al
+     * crearse —cargos por defecto, ganancia por defecto, base de la ganancia,
+     * IVA y redondeo de la empresa— y reparte el subtotal entre los productos.
+     * No guarda nada.
+     */
+    public QuoteChargeDtos.PreviewPrices previewClientPrices(QuoteChargeDtos.PreviewRequest req) {
+        Long companyId = tenant.getCompanyId();
+        List<QuoteChargeDtos.PreviewLine> lineas = req == null || req.lines() == null ? List.of() : req.lines();
+        List<BigDecimal> montos = lineas.stream()
+                .map(l -> l.lineTotal() == null || l.lineTotal().signum() <= 0 ? BigDecimal.ZERO : money(l.lineTotal()))
+                .toList();
+        BigDecimal subtotal = money(montos.stream().reduce(BigDecimal.ZERO, BigDecimal::add));
+
+        Map<Long, ChargeCategory> catalogo = categories.findByCompanyIdOrderBySortOrderAsc(companyId)
+                .stream().collect(Collectors.toMap(ChargeCategory::getId, Function.identity()));
+        Set<Long> activos = catalogo.values().stream()
+                .filter(c -> !"inactive".equalsIgnoreCase(c.getStatus()))
+                .map(ChargeCategory::getId).collect(Collectors.toSet());
+        BigDecimal fixedTotal = BigDecimal.ZERO, percentTotal = BigDecimal.ZERO, capturados = BigDecimal.ZERO;
+        for (CargoDefecto d : aplicables(cargosPorDefecto(companyId), activos)) {
+            boolean pct = "percent".equalsIgnoreCase(d.calcType());
+            BigDecimal monto = pct
+                    ? money(subtotal.multiply(money(d.value())).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
+                    : money(d.value());
+            if (pct) percentTotal = percentTotal.add(monto); else fixedTotal = fixedTotal.add(monto);
+            ChargeCategory cat = catalogo.get(d.categoryId());
+            if (cat != null && Boolean.TRUE.equals(cat.getOperating())) capturados = capturados.add(monto);
+        }
+        GananciaDefecto g = gananciaPorDefecto(companyId).orElse(new GananciaDefecto("fixed", BigDecimal.ZERO));
+        BigDecimal tasa = taxService.rate();
+        // Una cotización nueva nace en modo 'single' (o 'detailed' con cargos): nunca 'percent'.
+        Totales t = totales(subtotal, fixedTotal, percentTotal, capturados, false, BigDecimal.ZERO,
+                "percent".equalsIgnoreCase(g.calcType()) ? "percent" : "fixed", money(g.value()),
+                baseGanancia(companyId), BigDecimal.ZERO, tasa, pasoRedondeo(companyId), modoRedondeo(companyId));
+
+        List<BigDecimal> partes = repartir(montos, subtotal.signum() > 0 ? t.adjustedBase() : BigDecimal.ZERO);
+        List<QuoteChargeDtos.PreviewPrice> out = new ArrayList<>();
+        for (int k = 0; k < lineas.size(); k++) {
+            boolean review = montos.get(k).signum() == 0;
+            out.add(new QuoteChargeDtos.PreviewPrice(lineas.get(k).key(), unitario(partes.get(k), lineas.get(k).quantity()),
+                    partes.get(k), review));
+        }
+        return new QuoteChargeDtos.PreviewPrices(t.adjustedBase(), t.tax(), t.total(), out);
     }
 
     /**
@@ -529,51 +642,25 @@ public class QuoteChargeService {
                 .filter(c -> esOperativo(c, catalogo))
                 .map(c -> c.getComputedAmount() == null ? BigDecimal.ZERO : c.getComputedAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal operatingExpenses = porPorcentaje
-                ? money(subtotal.multiply(money(quote.getOperatingExpensePct()))
-                        .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
-                : capturados;
-
-        // Los cargos que NO son operativos no caben en la fórmula del negocio,
-        // pero desaparecerlos cambiaría el total en silencio: van en su propio
-        // renglón, antes de la ganancia.
-        BigDecimal otherCharges = money(fixedTotal.add(percentTotal).subtract(capturados));
-        BigDecimal subtotalCost = money(subtotal.add(operatingExpenses));
-        BigDecimal operatingCost = money(subtotalCost.add(otherCharges));
         String profitCalcType = "percent".equals(quote.getProfitCalcType()) ? "percent" : "fixed";
         BigDecimal profitValue = money(quote.getProfitValue());
         String profitBaseMode = baseGanancia(companyId);
-        BigDecimal profitBase = BASE_COSTO_DIRECTO.equals(profitBaseMode) ? subtotal : operatingCost;
-        BigDecimal profitAmount = "percent".equals(profitCalcType)
-                ? money(profitBase.multiply(profitValue).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
-                : profitValue;
-        BigDecimal taxableSubtotal = money(operatingCost.add(profitAmount));
-        // El ajuste de cierre entra ANTES del IVA: el impuesto se calcula sobre
-        // lo que de verdad se le cobra al cliente. Y la base no baja de cero
-        // aunque el descuento sea mayor que el total, porque un IVA negativo no
-        // existe y el error se propagaría a la factura.
-        BigDecimal manualAdjustment = money(quote.getManualAdjustment());
-        BigDecimal adjustedBase = money(taxableSubtotal.add(manualAdjustment)).max(BigDecimal.ZERO);
         BigDecimal taxRate = rateFor(quote);
-        BigDecimal tax = money(adjustedBase.multiply(taxRate)
-                .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
-        BigDecimal total = money(adjustedBase.add(tax));
-
-        // Redondeo automático del TOTAL (quotes.rounding_step / _mode): lo que
-        // ve el cliente queda redondo (Q 8,995.50 → Q 8,995). La base y el IVA
-        // se recalculan desde el total redondeado para que sigan cuadrando.
-        BigDecimal roundingAdjustment = BigDecimal.ZERO;
-        BigDecimal paso = pasoRedondeo(companyId);
-        if (paso.signum() > 0 && total.signum() > 0) {
-            BigDecimal redondo = redondear(total, paso, modoRedondeo(companyId));
-            if (redondo.compareTo(total) != 0) {
-                roundingAdjustment = money(redondo.subtract(total));
-                BigDecimal divisor = BigDecimal.ONE.add(taxRate.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
-                adjustedBase = money(redondo.divide(divisor, 4, RoundingMode.HALF_UP));
-                tax = money(redondo.subtract(adjustedBase));
-                total = money(redondo);
-            }
-        }
+        Totales t = totales(subtotal, fixedTotal, percentTotal, capturados, porPorcentaje,
+                money(quote.getOperatingExpensePct()), profitCalcType, profitValue, profitBaseMode,
+                money(quote.getManualAdjustment()), taxRate, pasoRedondeo(companyId), modoRedondeo(companyId));
+        BigDecimal operatingExpenses = t.operatingExpenses();
+        BigDecimal otherCharges = t.otherCharges();
+        BigDecimal subtotalCost = t.subtotalCost();
+        BigDecimal operatingCost = t.operatingCost();
+        BigDecimal profitBase = t.profitBase();
+        BigDecimal profitAmount = t.profitAmount();
+        BigDecimal taxableSubtotal = t.taxableSubtotal();
+        BigDecimal manualAdjustment = t.manualAdjustment();
+        BigDecimal adjustedBase = t.adjustedBase();
+        BigDecimal tax = t.tax();
+        BigDecimal total = t.total();
+        BigDecimal roundingAdjustment = t.roundingAdjustment();
 
         quote.setProfitCalcType(profitCalcType);
         quote.setProfitValue(profitValue);
@@ -602,6 +689,67 @@ public class QuoteChargeService {
                 subtotalCost, money(percentTotal), operatingCost, profitCalcType, profitValue,
                 profitAmount, taxableSubtotal, manualAdjustment, adjustedBase,
                 taxRate, tax, total, out, money(profitBase), profitBaseMode, roundingAdjustment);
+    }
+
+    /** Montos de una cotización a partir del subtotal de líneas y de los cargos ya valuados. */
+    record Totales(BigDecimal operatingExpenses, BigDecimal otherCharges, BigDecimal subtotalCost,
+                   BigDecimal operatingCost, BigDecimal profitBase, BigDecimal profitAmount,
+                   BigDecimal taxableSubtotal, BigDecimal manualAdjustment, BigDecimal adjustedBase,
+                   BigDecimal tax, BigDecimal total, BigDecimal roundingAdjustment) {}
+
+    /**
+     * La fórmula del negocio, sin base de datos: la usan la cotización
+     * ({@link #recompute}) y la vista previa del carrito, para que nunca
+     * calculen distinto.
+     *
+     * @param capturados cargos operativos capturados (cuentan como gasto operativo salvo en modo 'percent')
+     */
+    static Totales totales(BigDecimal subtotal, BigDecimal fixedTotal, BigDecimal percentTotal, BigDecimal capturados,
+                           boolean porPorcentaje, BigDecimal operatingPct, String profitCalcType, BigDecimal profitValue,
+                           String profitBaseMode, BigDecimal manualAdjustmentIn, BigDecimal taxRate,
+                           BigDecimal paso, String modoRedondeo) {
+        BigDecimal operatingExpenses = porPorcentaje
+                ? money(subtotal.multiply(money(operatingPct))
+                        .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
+                : capturados;
+
+        // Los cargos que NO son operativos no caben en la fórmula del negocio,
+        // pero desaparecerlos cambiaría el total en silencio: van en su propio
+        // renglón, antes de la ganancia.
+        BigDecimal otherCharges = money(fixedTotal.add(percentTotal).subtract(capturados));
+        BigDecimal subtotalCost = money(subtotal.add(operatingExpenses));
+        BigDecimal operatingCost = money(subtotalCost.add(otherCharges));
+        BigDecimal profitBase = BASE_COSTO_DIRECTO.equals(profitBaseMode) ? subtotal : operatingCost;
+        BigDecimal profitAmount = "percent".equals(profitCalcType)
+                ? money(profitBase.multiply(profitValue).divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP))
+                : profitValue;
+        BigDecimal taxableSubtotal = money(operatingCost.add(profitAmount));
+        // El ajuste de cierre entra ANTES del IVA: el impuesto se calcula sobre
+        // lo que de verdad se le cobra al cliente. Y la base no baja de cero
+        // aunque el descuento sea mayor que el total, porque un IVA negativo no
+        // existe y el error se propagaría a la factura.
+        BigDecimal manualAdjustment = money(manualAdjustmentIn);
+        BigDecimal adjustedBase = money(taxableSubtotal.add(manualAdjustment)).max(BigDecimal.ZERO);
+        BigDecimal tax = money(adjustedBase.multiply(taxRate)
+                .divide(new BigDecimal("100"), 4, RoundingMode.HALF_UP));
+        BigDecimal total = money(adjustedBase.add(tax));
+
+        // Redondeo automático del TOTAL (quotes.rounding_step / _mode): lo que
+        // ve el cliente queda redondo (Q 8,995.50 → Q 8,995). La base y el IVA
+        // se recalculan desde el total redondeado para que sigan cuadrando.
+        BigDecimal roundingAdjustment = BigDecimal.ZERO;
+        if (paso.signum() > 0 && total.signum() > 0) {
+            BigDecimal redondo = redondear(total, paso, modoRedondeo);
+            if (redondo.compareTo(total) != 0) {
+                roundingAdjustment = money(redondo.subtract(total));
+                BigDecimal divisor = BigDecimal.ONE.add(taxRate.divide(new BigDecimal("100"), 10, RoundingMode.HALF_UP));
+                adjustedBase = money(redondo.divide(divisor, 4, RoundingMode.HALF_UP));
+                tax = money(redondo.subtract(adjustedBase));
+                total = money(redondo);
+            }
+        }
+        return new Totales(operatingExpenses, otherCharges, subtotalCost, operatingCost, profitBase, profitAmount,
+                taxableSubtotal, manualAdjustment, adjustedBase, tax, total, roundingAdjustment);
     }
 
     private boolean esOperativo(QuoteCharge c, Map<Long, ChargeCategory> catalogo) {
