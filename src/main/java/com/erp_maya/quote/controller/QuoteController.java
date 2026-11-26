@@ -10,6 +10,7 @@ import com.erp_maya.mail.dto.MailSettingsDtos;
 import com.erp_maya.mail.service.MailService;
 import com.erp_maya.mail.service.QuoteMailService;
 import com.erp_maya.mail.service.QuotePdfService;
+import com.erp_maya.quote.service.ClientPricePreviewService;
 import com.erp_maya.quote.service.QuoteChargeService;
 import com.erp_maya.quote.service.QuotePlanService;
 import io.micronaut.core.annotation.Nullable;
@@ -37,9 +38,11 @@ public class QuoteController {
     private final QuotePlanService plan;
     private final QuoteMailService quoteMail;
     private final QuotePdfService pdf;
+    private final ClientPricePreviewService previews;
 
     public QuoteController(QuoteService service, QuoteChargeService charges, QuotePlanService plan,
-                           QuoteMailService quoteMail, QuotePdfService pdf) {
+                           QuoteMailService quoteMail, QuotePdfService pdf, ClientPricePreviewService previews) {
+        this.previews = previews;
         this.quoteMail = quoteMail;
         this.pdf = pdf;
         this.service = service;
@@ -181,11 +184,18 @@ public class QuoteController {
 
     /**
      * Vista previa de precios al cliente para productos que aún no están en
-     * una cotización (carrito con productos en espera). No guarda nada.
+     * una cotización (carrito con productos en espera, planificador). Admite
+     * líneas con plantilla de cálculo. No guarda nada.
      */
     @Post("/client-prices/preview")
     public QuoteChargeDtos.PreviewPrices previewClientPrices(@Body QuoteChargeDtos.PreviewRequest request) {
-        return charges.previewClientPrices(service.conPrecioPorMedida(request));
+        return previews.preview(request);
+    }
+
+    /** Varias vistas previas independientes en una consulta (una opción y sus variantes). */
+    @Post("/client-prices/preview/batch")
+    public QuoteChargeDtos.PreviewBatchResponse previewClientPricesBatch(@Body QuoteChargeDtos.PreviewBatchRequest request) {
+        return previews.batch(request);
     }
 
     /** Precios al cliente con los cargos dentro de cada producto (carrito del chat web). */

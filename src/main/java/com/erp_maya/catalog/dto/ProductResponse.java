@@ -35,7 +35,8 @@ public record ProductResponse(
         String reviewNotes,
         Instant createdAt,
         /** Nulo sin foto; si no, va en ?v= de GET /api/products/{id}/image. */
-        Long imageVersion
+        Long imageVersion,
+        String description
 ) {
 
     @Serdeable

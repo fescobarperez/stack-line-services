@@ -73,7 +73,25 @@ public class ProductService {
      */
     @Transactional
     public Page<ProductResponse> list(String search, String itemType, String review, Pageable pageable) {
+        return list(search, itemType, review, null, pageable);
+    }
+
+    /**
+     * Con `categoryId`: los de esa categoría y sus subcategorías (el
+     * planificador muestra una categoría con todo lo que cuelga de ella). Se
+     * combina con `itemType`; `search` no aplica ahí.
+     */
+    @Transactional
+    public Page<ProductResponse> list(String search, String itemType, String review, Long categoryId, Pageable pageable) {
         Long companyId = tenant.getCompanyId();
+        if (categoryId != null && (review == null || review.isBlank())) {
+            List<Long> ids = conSubcategorias(categories.findByCompanyId(companyId), categoryId);
+            if (ids.isEmpty()) throw new ResourceNotFoundException("Categoría " + categoryId + " no encontrada");
+            Page<Product> page = itemType == null || itemType.isBlank()
+                    ? products.enCategorias(companyId, ids, pageable)
+                    : products.enCategoriasPorTipo(companyId, ids, itemType, pageable);
+            return page.map(this::toResponse);
+        }
         if (review != null && !review.isBlank()) {
             if (!List.of(Product.REVIEW_PENDING, Product.REVIEW_DISCARDED).contains(review)) {
                 throw new IllegalStateException("Estado de revisión no válido: " + review);
@@ -430,6 +448,34 @@ public class ProductService {
         boolean conMedidas = p.getHeight() != null || p.getWidth() != null || p.getDepth() != null;
         p.setDimensionUnit(!conMedidas ? null
                 : req.dimensionUnit() == null || req.dimensionUnit().isBlank() ? "m" : req.dimensionUnit().trim());
+        p.setDescription(descripcion(p.getDescription(), req.description()));
+    }
+
+    /**
+     * La descripción que queda: la pedida sin espacios sobrantes, la actual si
+     * no vino (una pantalla o integración que no conoce el campo no la borra) y
+     * ninguna si vino vacía.
+     */
+    static String descripcion(String actual, String pedida) {
+        if (pedida == null) return actual;
+        String limpia = pedida.strip();
+        return limpia.isEmpty() ? null : limpia;
+    }
+
+    /**
+     * La categoría y todas las que cuelgan de ella, de las de la empresa. Vacía
+     * si la categoría no es de esta empresa. Tolera ciclos (no deberían existir).
+     */
+    static List<Long> conSubcategorias(List<Category> todas, Long raiz) {
+        if (todas.stream().noneMatch(c -> raiz.equals(c.getId()))) return List.of();
+        List<Long> out = new java.util.ArrayList<>(List.of(raiz));
+        for (int i = 0; i < out.size(); i++) {
+            Long padre = out.get(i);
+            for (Category c : todas) {
+                if (padre.equals(c.getParentId()) && !out.contains(c.getId())) out.add(c.getId());
+            }
+        }
+        return out;
     }
 
     /** Medida opcional: vacía es "sin medida"; cero o negativa no tiene sentido. */
@@ -504,7 +550,8 @@ public class ProductService {
                 p.getItemType(), p.getTracksStock(), p.getMinStock(), p.getStatus(), supplierCosts,
                 p.getHeight(), p.getWidth(), p.getDepth(), p.getDimensionUnit(),
                 p.getOrigin(), p.getReviewStatus(), p.getReviewNotes(), p.getCreatedAt(),
-                p.getImageUpdatedAt() != null ? p.getImageUpdatedAt().toEpochMilli() : null
+                p.getImageUpdatedAt() != null ? p.getImageUpdatedAt().toEpochMilli() : null,
+                p.getDescription()
         );
     }
 

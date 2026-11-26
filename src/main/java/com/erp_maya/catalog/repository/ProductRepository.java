@@ -65,6 +65,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             + "OR lower(p.sku) LIKE :texto)")
     Page<Product> buscarPorTipo(Long companyId, String itemType, String texto, Pageable pageable);
 
+    /** Los de esas categorías (una y sus subcategorías), sin los propuestos por el asistente. */
+    @Query(value = "SELECT p FROM Product p WHERE p.companyId = :companyId AND p.reviewStatus IS NULL "
+            + "AND p.category.id IN (:categoryIds)",
+           countQuery = "SELECT count(p) FROM Product p WHERE p.companyId = :companyId AND p.reviewStatus IS NULL "
+            + "AND p.category.id IN (:categoryIds)")
+    Page<Product> enCategorias(Long companyId, List<Long> categoryIds, Pageable pageable);
+
+    @Query(value = "SELECT p FROM Product p WHERE p.companyId = :companyId AND p.reviewStatus IS NULL "
+            + "AND p.itemType = :itemType AND p.category.id IN (:categoryIds)",
+           countQuery = "SELECT count(p) FROM Product p WHERE p.companyId = :companyId AND p.reviewStatus IS NULL "
+            + "AND p.itemType = :itemType AND p.category.id IN (:categoryIds)")
+    Page<Product> enCategoriasPorTipo(Long companyId, List<Long> categoryIds, String itemType, Pageable pageable);
+
     /** Pares para translate(): cada vocal con tilde o diéresis (y la ñ) y su letra simple. */
     String ACENTOS = "áéíóúüàèìòùâêîôûñ";
     String SIN_ACENTOS = "aeiouuaeiouaeioun";

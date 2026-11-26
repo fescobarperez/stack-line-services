@@ -2,6 +2,7 @@ package com.erp_maya.catalog.dto;
 
 import io.micronaut.serde.annotation.Serdeable;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 
@@ -25,6 +26,13 @@ public record ProductRequest(
         BigDecimal height,
         BigDecimal width,
         BigDecimal depth,
-        String dimensionUnit
+        String dimensionUnit,
+        /**
+         * Descripción. Nula = no se toca (quien edita sin conocer el campo no la
+         * borra); vacía = se quita.
+         */
+        @Size(max = ProductRequest.MAX_DESCRIPTION) String description
 ) {
+
+    public static final int MAX_DESCRIPTION = 4000;
 }

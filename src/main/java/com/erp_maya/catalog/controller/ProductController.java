@@ -48,8 +48,9 @@ public class ProductController {
     public Page<ProductResponse> list(@Nullable @QueryValue String search,
                                       @Nullable @QueryValue String itemType,
                                       @Nullable @QueryValue String review,
+                                      @Nullable @QueryValue Long categoryId,
                                       Pageable pageable) {
-        return service.list(search, itemType, review, pageable);
+        return service.list(search, itemType, review, categoryId, pageable);
     }
 
     /** Cuántos productos propuestos por el asistente esperan revisión. */

@@ -29,7 +29,8 @@ import java.nio.charset.StandardCharsets;
  * Agentes de IA de una empresa en la consola (API.md · «Agentes de la
  * empresa»). Solo operadores de plataforma: el ERP de la empresa no los ve.
  *
- * Roles: leer, cualquiera; política, alta, edición, archivo y widgets web, owner;
+ * Roles: leer, cualquiera; política, alta, edición, archivo, widgets web y
+ * planificadores, owner;
  * instrucciones y playbook, owner o support. Se comprueba que la empresa
  * exista antes de reenviar a agents-services ({@code /v1/admin/tenants/{id}}).
  */
@@ -114,6 +115,22 @@ public class PlatformCompanyAgentsController {
                                                    @Body String body, Authentication auth) {
         PlatformAccess.require(auth, PlatformOperator.OWNER);
         return proxy.forward(HttpMethod.PATCH, base(companyId) + "/web-channels/" + channelId, body, auth);
+    }
+
+    // ── Planificador por presupuesto (bloque fijo en la página de la empresa) ──
+    // Sin estas rutas, POST …/planner-widgets caía en PATCH /{id} y respondía 405.
+
+    @Post(value = "/planner-widgets", consumes = MediaType.APPLICATION_JSON)
+    public MutableHttpResponse<?> createPlannerWidget(@PathVariable Long companyId, @Body String body, Authentication auth) {
+        PlatformAccess.require(auth, PlatformOperator.OWNER);
+        return proxy.forward(HttpMethod.POST, base(companyId) + "/planner-widgets", body, auth);
+    }
+
+    @Patch(value = "/planner-widgets/{channelId}", consumes = MediaType.APPLICATION_JSON)
+    public MutableHttpResponse<?> updatePlannerWidget(@PathVariable Long companyId, @PathVariable Long channelId,
+                                                      @Body String body, Authentication auth) {
+        PlatformAccess.require(auth, PlatformOperator.OWNER);
+        return proxy.forward(HttpMethod.PATCH, base(companyId) + "/planner-widgets/" + channelId, body, auth);
     }
 
     @Get("/{id}/instructions")

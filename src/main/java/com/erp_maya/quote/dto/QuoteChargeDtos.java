@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 /** Gastos/cargos de la cotización y el resumen de totales calculado. */
 public final class QuoteChargeDtos {
@@ -111,15 +112,29 @@ public final class QuoteChargeDtos {
     /**
      * Con `productId` y medidas, el ERP aplica el precio por medida como al
      * cotizar (fuera de la tolerancia, la línea queda en 0: la cotiza un asesor).
+     *
+     * Con `templateId`, la línea se calcula con la plantilla del producto
+     * (params, choices, preset) como al agregarla a una cotización: el costo de
+     * su materia prima es el precio base y `lineTotal` se ignora. Si a alguna
+     * materia prima le falta costo, la línea queda en 0 (la cotiza un asesor).
      */
     @Serdeable
     public record PreviewLine(String key, BigDecimal quantity, BigDecimal lineTotal,
                               @io.micronaut.core.annotation.Nullable Long productId,
                               @io.micronaut.core.annotation.Nullable BigDecimal height,
                               @io.micronaut.core.annotation.Nullable BigDecimal width,
-                              @io.micronaut.core.annotation.Nullable BigDecimal depth) {
+                              @io.micronaut.core.annotation.Nullable BigDecimal depth,
+                              @io.micronaut.core.annotation.Nullable Long templateId,
+                              @io.micronaut.core.annotation.Nullable Map<String, BigDecimal> params,
+                              @io.micronaut.core.annotation.Nullable Map<String, String> choices,
+                              @io.micronaut.core.annotation.Nullable String preset) {
         public PreviewLine(String key, BigDecimal quantity, BigDecimal lineTotal) {
             this(key, quantity, lineTotal, null, null, null, null);
+        }
+
+        public PreviewLine(String key, BigDecimal quantity, BigDecimal lineTotal, Long productId,
+                           BigDecimal height, BigDecimal width, BigDecimal depth) {
+            this(key, quantity, lineTotal, productId, height, width, depth, null, null, null, null);
         }
     }
 
@@ -130,4 +145,27 @@ public final class QuoteChargeDtos {
     /** `review`: la medida se sale de la tolerancia y el precio lo pone un asesor. */
     @Serdeable
     public record PreviewPrice(String key, BigDecimal unitPrice, BigDecimal lineTotal, boolean review) {}
+
+    /**
+     * Varias vistas previas en una sola consulta (el planificador valora una
+     * opción y sus variantes). Cada escenario se valora por separado, con sus
+     * propios cargos: un cargo fijo se cobra en cada uno, no se reparte.
+     */
+    @Serdeable
+    public record PreviewBatchRequest(List<PreviewScenario> scenarios) {}
+
+    @Serdeable
+    public record PreviewScenario(String key, List<PreviewLine> lines) {}
+
+    @Serdeable
+    public record PreviewBatchResponse(List<ScenarioPrices> scenarios) {}
+
+    /** Los precios de un escenario; si no se pudo valorar, montos nulos y `error` dice por qué. */
+    @Serdeable
+    public record ScenarioPrices(String key,
+                                 @io.micronaut.core.annotation.Nullable BigDecimal subtotal,
+                                 @io.micronaut.core.annotation.Nullable BigDecimal tax,
+                                 @io.micronaut.core.annotation.Nullable BigDecimal total,
+                                 List<PreviewPrice> lines,
+                                 @io.micronaut.core.annotation.Nullable String error) {}
 }

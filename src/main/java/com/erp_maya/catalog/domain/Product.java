@@ -88,6 +88,9 @@ public class Product {
     @Column(name = "review_notes")
     private String reviewNotes;
 
+    /** Qué es, de qué está hecho y para qué sirve. Opcional. */
+    private String description;
+
     /** Versión de la foto (ver product_images); nula si no tiene. */
     @Column(name = "image_updated_at")
     private Instant imageUpdatedAt;
@@ -162,6 +165,9 @@ public class Product {
 
     public String getReviewStatus() { return reviewStatus; }
     public void setReviewStatus(String reviewStatus) { this.reviewStatus = reviewStatus; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 
     public String getReviewNotes() { return reviewNotes; }
     public void setReviewNotes(String reviewNotes) { this.reviewNotes = reviewNotes; }
