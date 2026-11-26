@@ -221,11 +221,23 @@ agents_after=$(rev "$AGENTS_DIR")
 crawler_after=$(rev "$CRAWLER_DIR")
 console_after=$(rev "$CONSOLE_DIR")
 
-printf '  backend  %s -> %s\n' "${backend_before:0:7}" "${backend_after:0:7}"
-printf '  web      %s -> %s\n' "${ui_before:0:7}" "${ui_after:0:7}"
-printf '  agents   %s -> %s\n' "${agents_before:0:7}" "${agents_after:0:7}"
-printf '  crawler  %s -> %s\n' "${crawler_before:0:7}" "${crawler_after:0:7}"
-printf '  console  %s -> %s\n' "${console_before:0:7}" "${console_after:0:7}"
+# Only the repositories this target updated. stack-line-services is always
+# updated (it holds docker-compose.yml and this script) but it is only the
+# backend's code when the target is backend.
+show_rev() { printf '  %-9s %s -> %s\n' "$1" "${2:0:7}" "${3:0:7}"; }
+show_rev services "$backend_before" "$backend_after"
+case "$TARGET" in
+  web)      show_rev web "$ui_before" "$ui_after" ;;
+  agents)   show_rev agents "$agents_before" "$agents_after" ;;
+  crawling) show_rev crawler "$crawler_before" "$crawler_after" ;;
+  console)  show_rev console "$console_before" "$console_after" ;;
+  auto|all)
+    show_rev web "$ui_before" "$ui_after"
+    show_rev agents "$agents_before" "$agents_after"
+    show_rev crawler "$crawler_before" "$crawler_after"
+    show_rev console "$console_before" "$console_after"
+    ;;
+esac
 
 say "2/4 · Selecting images"
 build=()
@@ -317,10 +329,13 @@ check() {
     api)     [ "$(http_code http://localhost/api/clients)" = "401" ] ;;
     agents)  code=$(http_code http://localhost/webhooks/whatsapp); [ "${code:0:1}" = "4" ] ;;
     # Inside its own container: it does not depend on the web proxy being redeployed.
-    console) docker compose exec -T console wget -q -O /dev/null http://127.0.0.1/console/ >/dev/null 2>&1 ;;
+    # </dev/null: the workflows pipe this script into `bash -s`, and an exec
+    # that reads stdin would swallow the rest of it (a failed check could then
+    # end the deployment with status 0).
+    console) docker compose exec -T console wget -q -O /dev/null http://127.0.0.1/console/ </dev/null >/dev/null 2>&1 ;;
     crawler) docker compose exec -T crawling python -c \
                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5).read()" \
-               >/dev/null 2>&1 ;;
+               </dev/null >/dev/null 2>&1 ;;
   esac
 }
 
