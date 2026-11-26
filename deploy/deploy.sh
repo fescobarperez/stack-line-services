@@ -320,14 +320,33 @@ case "$TARGET" in
   auto|all) checks=(web api agents crawler console) ;;
 esac
 
-http_code() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" || true; }
+# The checks go through Caddy the way a visitor does. With a domain in
+# SITE_ADDRESS Caddy serves HTTPS and answers plain HTTP with a redirect, so
+# they use that domain over HTTPS, resolved to this machine (no DNS, and the
+# certificate is verified). With ":80" (no certificate) they use localhost.
+site=$(sed -n 's/^SITE_ADDRESS=//p' "$DEPLOY_DIR/.env" | tail -1 | tr -d "\"' ")
+site=${site%%,*}
+case "$site" in
+  ""|:*)
+    check_base=http://localhost; check_resolve=() ;;
+  http://*)
+    host=${site#http://}; host=${host%%[:/]*}
+    check_base="http://$host"; check_resolve=(--resolve "$host:80:127.0.0.1") ;;
+  *)
+    host=${site#https://}; host=${host%%[:/]*}
+    check_base="https://$host"; check_resolve=(--resolve "$host:443:127.0.0.1") ;;
+esac
+
+http_code() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${check_resolve[@]}" "$check_base$1" || true
+}
 
 check() {
   local code
   case "$1" in
-    web)     [ "$(http_code http://localhost/)" = "200" ] ;;
-    api)     [ "$(http_code http://localhost/api/clients)" = "401" ] ;;
-    agents)  code=$(http_code http://localhost/webhooks/whatsapp); [ "${code:0:1}" = "4" ] ;;
+    web)     [ "$(http_code /)" = "200" ] ;;
+    api)     [ "$(http_code /api/clients)" = "401" ] ;;
+    agents)  code=$(http_code /webhooks/whatsapp); [ "${code:0:1}" = "4" ] ;;
     # Inside its own container: it does not depend on the web proxy being redeployed.
     # </dev/null: the workflows pipe this script into `bash -s`, and an exec
     # that reads stdin would swallow the rest of it (a failed check could then
