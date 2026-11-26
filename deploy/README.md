@@ -1,8 +1,9 @@
 # Stackline deployment
 
-The production stack runs four application containers: the Micronaut backend,
-the Python crawler, the sales agent, and Caddy for the web application and
-reverse proxy. PostgreSQL is available only through the optional `local-db`
+The production stack runs five application containers: the Micronaut backend,
+the Python crawler, the sales agent, the platform console, and Caddy for the
+web application and reverse proxy. The console is served by that same Caddy at
+`/console` on the app's domain (e.g. `https://stackline.com.gt/console`). PostgreSQL is available only through the optional `local-db`
 profile because deployed environments use RDS.
 
 Only Caddy publishes host ports. The backend, crawler, agent, and database stay
@@ -37,9 +38,9 @@ sudo usermod -aG docker $USER && exec newgrp docker
 
 ## 3. Sibling repositories
 
-Docker Compose expects this directory layout. `deploy.sh` clones the public
-crawler repository automatically if it is missing; the commands below show the
-complete initial setup.
+Docker Compose expects this directory layout. `deploy.sh` clones the crawler
+and the console repositories automatically if they are missing; the commands
+below show the complete initial setup.
 
 ```bash
 mkdir -p ~/stackline && cd ~/stackline
@@ -47,7 +48,16 @@ git clone https://github.com/fescobarperez/stack-line-services.git
 git clone https://github.com/fescobarperez/stack-line-ui.git
 git clone https://github.com/fescobarperez/agents-services.git
 git clone --branch feat/initial-crawling-runtime https://github.com/bragonya/sites-crawler.git
+git clone https://github.com/fescobarperez/stackline-console-ui.git
 ```
+
+The console (`stackline-console-ui`) is built with base path `/console/` and
+runs in its own container on the internal network; the `web` Caddy forwards
+`/console/*` to it without stripping the prefix. Its API calls go to
+`/api/platform/*` on the same domain, which the `web` Caddy already sends to
+the backend, so there is no CORS. `CONSOLE_META_APP_ID` and
+`CONSOLE_META_CONFIG_ID` in `deploy/.env` are public build values for the
+WhatsApp embedded signup.
 
 ## 4. Configuración
 
@@ -156,21 +166,37 @@ registra en Meta es `https://<SITE_ADDRESS>/webhooks/whatsapp`.
 No hay despliegue automático al hacer push: `main` puede acumular commits y
 tú decides cuándo publicarlos.
 
+### Un proyecto a la vez
+
+Cada repositorio despliega **solo su servicio**, con su propio flujo de GitHub
+(Actions → Deploy):
+
+| Repositorio | Objetivo | Servicio |
+|---|---|---|
+| stack-line-services | `backend` (o `crawling`, `configure`) | `backend` (+ levanta `crawling` si hace falta) |
+| stack-line-ui | `web` | `web` (Caddy y la app) |
+| agents-services | `agents` | `agents` |
+| stackline-console-ui | `console` | `console` (en `/console`) |
+
+`deploy.sh <objetivo>` trae solo ese repositorio (y `stack-line-services`, que
+tiene el compose), construye solo su imagen, la reinicia con `--no-deps` y
+verifica solo ese servicio: si otro está caído, no tumba este despliegue.
+
+El servidor corre **un despliegue a la vez**: `deploy.sh` toma un candado
+(`~/stackline/.deploy.lock`) y, si otro repositorio está desplegando, espera
+a que termine (hasta 40 min, `DEPLOY_LOCK_WAIT`). Construir dos imágenes a la
+vez es lo que satura el `t4g.small`. El grupo `concurrency` de los flujos solo
+evita dos despliegues del mismo repositorio (en GitHub es por repositorio).
+
 ### Desde tu máquina
 
 ```bash
-ssh -i ~/.ssh/stackline.pem ubuntu@3.142.8.206 './stackline/stack-line-services/deploy/deploy.sh'
+ssh -i ~/.ssh/stackline.pem ubuntu@3.142.8.206 './stackline/stack-line-services/deploy/deploy.sh backend'
 ```
 
-The script updates all four repositories and rebuilds only images whose source
-changed. Image builds run sequentially so a full release stays within the memory
-budget of the current `t4g.small`. Use `deploy.sh backend`, `deploy.sh web`,
-`deploy.sh agents`, or `deploy.sh crawling` for a targeted rollout. Use
-`deploy.sh all` for the first crawler rollout so every dependency is started
-from a known revision.
-
-Verification requires the web application, authenticated API boundary, sales
-agent route, and crawler `/healthz` endpoint to respond.
+Sin objetivo el script no hace nada. `deploy.sh auto` (todo lo que cambió) y
+`deploy.sh all` (las cinco imágenes, una tras otra) quedan solo para un primer
+arranque o una recuperación, a mano: no están en los flujos de GitHub.
 
 ### Desde GitHub
 
@@ -186,6 +212,10 @@ requires these repository secrets:
 | `SSH_USER` | `ubuntu` |
 | `SSH_KNOWN_HOSTS` | salida de `ssh-keyscan -t ed25519 <IP>` |
 | `OPENAI_API_KEY` | OpenAI API key streamed into the private EC2 `deploy/.env` |
+
+`stack-line-ui`, `agents-services` y `stackline-console-ui` necesitan los mismos
+cuatro secretos `SSH_*` en su entorno `produccion` (no `OPENAI_API_KEY`: solo el
+backend la sincroniza).
 
 The workflow never places the OpenAI key in a command argument or log. It sends
 the value through SSH standard input to a mode-0600 temporary file. The deploy

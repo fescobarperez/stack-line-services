@@ -117,16 +117,33 @@ services:
       WHATSAPP_STICKERS_ENABLED: ${WHATSAPP_STICKERS_ENABLED:-true}
       JAVA_OPTS: ${AGENTS_JAVA_OPTS:--XX:MaxRAMPercentage=75}
 
+  # Consola de plataforma: estático propio, publicado por `web` en /console.
+  # Solo red interna; los valores de Meta son públicos (van al navegador).
+  console:
+    build:
+      context: ${CONSOLE_CONTEXT:-../../stackline-console-ui}
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_PATH: /console/
+        VITE_META_APP_ID: ${CONSOLE_META_APP_ID:-}
+        VITE_META_CONFIG_ID: ${CONSOLE_META_CONFIG_ID:-}
+    restart: unless-stopped
+    depends_on: [backend]
+    environment:
+      SITE_ADDRESS: ":80"
+      API_UPSTREAM: backend:8080
+
   web:
     build:
       context: ${UI_CONTEXT:-../../stack-line-ui}
       dockerfile: Dockerfile
     restart: unless-stopped
-    depends_on: [backend]
+    depends_on: [backend, console]
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
       API_UPSTREAM: backend:8080
       AGENT_UPSTREAM: agents:8081
+      CONSOLE_UPSTREAM: console:80
     ports:
       - "80:80"
       - "443:443"

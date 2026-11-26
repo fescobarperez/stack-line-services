@@ -13,7 +13,10 @@ on:
         type: choice
         required: true
         default: backend
-        options: [inspect, cancel-builds, configure, backend, crawling, agents, auto, all]
+        # Cada repositorio despliega solo lo suyo (web, agents y console tienen
+        # su propio flujo). auto y all se corren a mano por SSH, solo para un
+        # primer arranque o una recuperación.
+        options: [inspect, cancel-builds, configure, backend, crawling]
 
 concurrency:
   group: deploy-produccion

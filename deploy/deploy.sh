@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 #
-# Deploy Stackline on the application server.
+# Deploy Stackline on the application server, one project at a time.
 #
-#   ./deploy.sh             rebuilds services whose source changed
+# Each repository deploys only itself (its own workflow calls one target):
+#
+#   ./deploy.sh backend     the ERP backend   (stack-line-services)
+#   ./deploy.sh web         the web app       (stack-line-ui)
+#   ./deploy.sh agents      agents-services
+#   ./deploy.sh console     the platform console at /console (stackline-console-ui)
+#   ./deploy.sh crawling    the Python crawler (sites-crawler)
 #   ./deploy.sh configure   syncs crawler AI variables without deploying
-#   ./deploy.sh backend     forces the ERP backend
-#   ./deploy.sh web         forces the web application
-#   ./deploy.sh agents      forces agents-services
-#   ./deploy.sh crawling    forces the Python crawler
-#   ./deploy.sh all         forces all four services
+#
+# Manual only, for a first setup or a recovery (they build several images):
+#
+#   ./deploy.sh auto        rebuilds every service whose source changed
+#   ./deploy.sh all         rebuilds all five services
+#
+# Deployments never overlap: a server-wide lock makes a second one wait until
+# the first finishes, whichever repository started it. Building two images at
+# once on this machine is what saturates it.
 
 set -euo pipefail
 
@@ -16,10 +26,16 @@ SERVICES_DIR="$HOME/stackline/stack-line-services"
 UI_DIR="$HOME/stackline/stack-line-ui"
 AGENTS_DIR="$HOME/stackline/agents-services"
 CRAWLER_DIR="$HOME/stackline/sites-crawler"
-CRAWLER_REPOSITORY="https://github.com/bragonya/sites-crawler.git"
+CRAWLER_REPOSITORY="${CRAWLER_REPOSITORY:-https://github.com/bragonya/sites-crawler.git}"
 CRAWLER_BRANCH="feat/initial-crawling-runtime"
+CONSOLE_DIR="$HOME/stackline/stackline-console-ui"
+CONSOLE_REPOSITORY="${CONSOLE_REPOSITORY:-https://github.com/fescobarperez/stackline-console-ui.git}"
+CONSOLE_CLONED=false
 DEPLOY_DIR="$SERVICES_DIR/deploy"
-TARGET="${1:-auto}"
+LOCK_FILE="$HOME/stackline/.deploy.lock"
+# How long a deployment waits for another one before giving up (seconds).
+LOCK_WAIT="${DEPLOY_LOCK_WAIT:-2400}"
+TARGET="${1:-}"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
@@ -122,10 +138,36 @@ ensure_crawler_repository() {
     "$CRAWLER_REPOSITORY" "$CRAWLER_DIR"
 }
 
+ensure_console_repository() {
+  if [ -d "$CONSOLE_DIR/.git" ]; then
+    return
+  fi
+  if [ -e "$CONSOLE_DIR" ]; then
+    echo "Console path exists but is not a Git repository: $CONSOLE_DIR" >&2
+    exit 1
+  fi
+  say "Preparing console repository"
+  git clone --quiet --single-branch --branch main "$CONSOLE_REPOSITORY" "$CONSOLE_DIR"
+  # A fresh clone has no changes to detect, but no image either: build it.
+  CONSOLE_CLONED=true
+}
+
 case "$TARGET" in
-  configure|auto|backend|web|agents|crawling|all) ;;
-  *) echo "Invalid target: $TARGET (use configure|auto|backend|web|agents|crawling|all)" >&2; exit 1 ;;
+  configure|auto|backend|web|agents|crawling|console|all) ;;
+  "") echo "Missing target: use backend|web|agents|console|crawling|configure (or auto|all by hand)" >&2; exit 1 ;;
+  *) echo "Invalid target: $TARGET (use backend|web|agents|console|crawling|configure|auto|all)" >&2; exit 1 ;;
 esac
+
+# One deployment at a time on this server, whichever repository started it.
+mkdir -p "$(dirname "$LOCK_FILE")"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "Another deployment is running; waiting for it to finish (up to $((LOCK_WAIT / 60)) min)..."
+  if ! flock -w "$LOCK_WAIT" 9; then
+    echo "Gave up waiting for the other deployment" >&2
+    exit 1
+  fi
+fi
 
 if [ "$TARGET" = "configure" ] && [ -z "${OPENAI_KEY_FILE:-}" ]; then
   echo "The configure target requires OPENAI_KEY_FILE" >&2
@@ -139,14 +181,24 @@ if [ "$TARGET" = "configure" ]; then
   exit 0
 fi
 
-# The crawler is public and can be bootstrapped without storing another deploy key.
-ensure_crawler_repository
+# Only the repositories this target needs. The backend starts the crawler
+# container too, so it needs its image (and the repository to build it once).
+case "$TARGET" in
+  backend|crawling|auto|all) ensure_crawler_repository ;;
+esac
+case "$TARGET" in
+  console|auto|all) ensure_console_repository ;;
+esac
+
+# Commit of a repository; "none" if it is not on this server (not deployed here).
+rev() { git -C "$1" rev-parse HEAD 2>/dev/null || echo none; }
 
 say "1/4 · Updating repositories"
-backend_before=$(git -C "$SERVICES_DIR" rev-parse HEAD)
-ui_before=$(git -C "$UI_DIR" rev-parse HEAD)
-agents_before=$(git -C "$AGENTS_DIR" rev-parse HEAD)
-crawler_before=$(git -C "$CRAWLER_DIR" rev-parse HEAD)
+backend_before=$(rev "$SERVICES_DIR")
+ui_before=$(rev "$UI_DIR")
+agents_before=$(rev "$AGENTS_DIR")
+crawler_before=$(rev "$CRAWLER_DIR")
+console_before=$(rev "$CONSOLE_DIR")
 
 git -C "$SERVICES_DIR" pull --ff-only -q origin main
 case "$TARGET" in
@@ -154,22 +206,26 @@ case "$TARGET" in
   web)      git -C "$UI_DIR" pull --ff-only -q origin main ;;
   agents)   git -C "$AGENTS_DIR" pull --ff-only -q origin main ;;
   crawling) git -C "$CRAWLER_DIR" pull --ff-only -q origin "$CRAWLER_BRANCH" ;;
+  console)  git -C "$CONSOLE_DIR" pull --ff-only -q origin main ;;
   auto|all)
     git -C "$UI_DIR" pull --ff-only -q origin main
     git -C "$AGENTS_DIR" pull --ff-only -q origin main
     git -C "$CRAWLER_DIR" pull --ff-only -q origin "$CRAWLER_BRANCH"
+    git -C "$CONSOLE_DIR" pull --ff-only -q origin main
     ;;
 esac
 
-backend_after=$(git -C "$SERVICES_DIR" rev-parse HEAD)
-ui_after=$(git -C "$UI_DIR" rev-parse HEAD)
-agents_after=$(git -C "$AGENTS_DIR" rev-parse HEAD)
-crawler_after=$(git -C "$CRAWLER_DIR" rev-parse HEAD)
+backend_after=$(rev "$SERVICES_DIR")
+ui_after=$(rev "$UI_DIR")
+agents_after=$(rev "$AGENTS_DIR")
+crawler_after=$(rev "$CRAWLER_DIR")
+console_after=$(rev "$CONSOLE_DIR")
 
 printf '  backend  %s -> %s\n' "${backend_before:0:7}" "${backend_after:0:7}"
 printf '  web      %s -> %s\n' "${ui_before:0:7}" "${ui_after:0:7}"
 printf '  agents   %s -> %s\n' "${agents_before:0:7}" "${agents_after:0:7}"
 printf '  crawler  %s -> %s\n' "${crawler_before:0:7}" "${crawler_after:0:7}"
+printf '  console  %s -> %s\n' "${console_before:0:7}" "${console_after:0:7}"
 
 say "2/4 · Selecting images"
 build=()
@@ -178,7 +234,8 @@ case "$TARGET" in
   web)      build=(web) ;;
   agents)   build=(agents) ;;
   crawling) build=(crawling) ;;
-  all)      build=(backend crawling web agents) ;;
+  console)  build=(console) ;;
+  all)      build=(backend crawling console web agents) ;;
   auto)
     if [ "$backend_before" != "$backend_after" ] && \
        ! git -C "$SERVICES_DIR" diff --quiet "$backend_before" "$backend_after" -- \
@@ -197,6 +254,13 @@ case "$TARGET" in
        ! git -C "$CRAWLER_DIR" diff --quiet "$crawler_before" "$crawler_after" -- \
          stackline_crawling pyproject.toml Dockerfile; then
       build+=(crawling)
+    fi
+    if [ "$CONSOLE_CLONED" = "true" ]; then
+      build+=(console)
+    elif [ "$console_before" != "$console_after" ] && \
+       ! git -C "$CONSOLE_DIR" diff --quiet "$console_before" "$console_after" -- \
+         src public index.html package.json package-lock.json vite.config.js Dockerfile Caddyfile; then
+      build+=(console)
     fi
     ;;
 esac
@@ -233,26 +297,54 @@ else
 fi
 
 say "4/4 · Verifying"
-for _ in $(seq 1 40); do
-  root_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/ || true)
-  api_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/api/clients || true)
-  agent_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/webhooks/whatsapp || true)
-  crawler_ok=false
-  if docker compose exec -T crawling python -c \
-      "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5).read()" \
-      >/dev/null 2>&1; then
-    crawler_ok=true
-  fi
+# Only what this target deployed: a service that is down elsewhere does not
+# fail another project's deployment.
+case "$TARGET" in
+  backend)  checks=(api crawler) ;;
+  web)      checks=(web) ;;
+  agents)   checks=(agents) ;;
+  crawling) checks=(crawler) ;;
+  console)  checks=(console) ;;
+  auto|all) checks=(web api agents crawler console) ;;
+esac
 
-  if [ "$root_code" = "200" ] && [ "$api_code" = "401" ] && \
-     [ "${agent_code:0:1}" = "4" ] && [ "$crawler_ok" = "true" ]; then
-    echo "  Web, API, agents, and crawler are responding"
+http_code() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" || true; }
+
+check() {
+  local code
+  case "$1" in
+    web)     [ "$(http_code http://localhost/)" = "200" ] ;;
+    api)     [ "$(http_code http://localhost/api/clients)" = "401" ] ;;
+    agents)  code=$(http_code http://localhost/webhooks/whatsapp); [ "${code:0:1}" = "4" ] ;;
+    # Inside its own container: it does not depend on the web proxy being redeployed.
+    console) docker compose exec -T console wget -q -O /dev/null http://127.0.0.1/console/ >/dev/null 2>&1 ;;
+    crawler) docker compose exec -T crawling python -c \
+               "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=5).read()" \
+               >/dev/null 2>&1 ;;
+  esac
+}
+
+service_of() {
+  case "$1" in
+    web) echo web ;; api) echo backend ;; agents) echo agents ;;
+    console) echo console ;; crawler) echo crawling ;;
+  esac
+}
+
+pending=("${checks[@]}")
+for _ in $(seq 1 40); do
+  pending=()
+  for c in "${checks[@]}"; do
+    check "$c" || pending+=("$c")
+  done
+  if [ ${#pending[@]} -eq 0 ]; then
+    echo "  Responding: ${checks[*]}"
     docker compose ps --format '  {{.Service}}  {{.Status}}'
     exit 0
   fi
   sleep 5
 done
 
-echo "Deployment verification timed out. Recent service logs:" >&2
-docker compose logs backend agents crawling --tail 30
+echo "Deployment verification timed out (not responding: ${pending[*]}). Recent logs:" >&2
+docker compose logs $(for c in "${pending[@]}"; do service_of "$c"; done) --tail 30
 exit 1
