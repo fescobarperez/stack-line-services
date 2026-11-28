@@ -17,6 +17,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     List<Payment> findByCompanyIdAndClientId(Long companyId, Long clientId);
 
+    /** Una venta con abonos no se anula: el dinero ya entró contra ella. */
+    boolean existsBySaleIdAndCompanyId(Long saleId, Long companyId);
+
     /** Cobros imputados a un proyecto: adelantos, avances o liquidación. */
     List<Payment> findByCompanyIdAndProjectIdOrderByPaymentDateDesc(Long companyId, Long projectId);
 

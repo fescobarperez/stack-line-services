@@ -13,4 +13,9 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     List<Account> findByCompanyIdOrderByCode(Long companyId);
 
     Optional<Account> findByIdAndCompanyId(Long id, Long companyId);
+
+    Optional<Account> findByCompanyIdAndCode(Long companyId, String code);
+
+    /** ¿Tiene subcuentas? Una cuenta con hijas no se borra ni cambia de nivel. */
+    boolean existsByParentId(Long parentId);
 }

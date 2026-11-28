@@ -5,6 +5,7 @@ import com.erp_maya.catalog.repository.ProductRepository;
 import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
 import com.erp_maya.accounting.service.PostingService;
+import com.erp_maya.accounting.service.PostingCase;
 import com.erp_maya.authorization.dto.AuthorizationDtos;
 import com.erp_maya.authorization.service.AuthorizationService;
 import com.erp_maya.project.domain.Project;
@@ -37,6 +38,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Set;
+import java.util.Map;
 
 /** Ventas del POS: crea la venta con su detalle, descuenta stock y cuadra la caja. */
 @Singleton
@@ -316,7 +318,8 @@ public class SaleService {
     }
 
     /**
-     * Lleva la venta al libro mayor.
+     * Lleva la venta al libro mayor con la plantilla asociada a su caso de uso.
+     * La plantilla por defecto (DefaultPostingTemplates) es:
      *
      *   Contado    Caja      débito total
      *   Crédito    Clientes  débito total
@@ -337,17 +340,19 @@ public class SaleService {
         if (total.signum() < 0) tax = tax.negate();       // NCRE: todo al revés
         BigDecimal base = total.subtract(tax);
 
-        // El destino del cargo: al fiado es una cuenta por cobrar, de contado
-        // es dinero que entró a la caja.
-        String destino = sale.isCredit() ? "posting.receivable" : "posting.cash";
+        // Al fiado el cargo es una cuenta por cobrar; de contado, dinero que
+        // entró a la caja: son dos casos de uso, cada uno con su plantilla.
         Long cc = costCenterOf(sale.getProjectId());
         String ref = sale.getDocNumber();
         String desc = ("NCRE".equals(sale.getDocType()) ? "Nota de crédito " : "Venta ") + ref;
 
-        posting.post("sale", sale.getId(), LocalDate.now(), desc, ref, PostingService.lines(
-                PostingService.Line.debit(destino, total, desc, cc),
-                PostingService.Line.credit("posting.revenue", base, "Ingresos " + ref, cc),
-                PostingService.Line.credit("posting.tax_payable", tax, "IVA " + ref, cc)));
+        // Qué cuentas se mueven lo decide la plantilla asociada al caso de uso
+        // (Contabilidad → Partidas automáticas); aquí solo se entregan los montos.
+        // La NCRE pasa los montos en negativo, como antes: la misma plantilla
+        // le invierte los signos.
+        PostingCase caso = sale.isCredit() ? PostingCase.POS_VENTA_CREDITO : PostingCase.POS_VENTA_CONTADO;
+        posting.postCase(caso, "sale", sale.getId(), LocalDate.now(), desc, ref, null,
+                Map.of("total", total, "base", base, "iva", tax), null, cc);
     }
 
     /** El centro de costo del proyecto, para que los reportes filtren por él. */
@@ -421,7 +426,8 @@ public class SaleService {
         return NEGATIVE_TYPES.contains(s.getDocType()) ? t.negate() : t;
     }
 
-    private static SaleDtos.Response toResponse(Sale s) {
+    /** Paquete y no privado: SaleVoidService devuelve la venta anulada con la misma forma. */
+    static SaleDtos.Response toResponse(Sale s) {
         var items = s.getItems().stream().map(i -> new SaleDtos.ItemResponse(
                 i.getId(), i.getProduct() != null ? i.getProduct().getId() : null,
                 i.getProduct() != null ? i.getProduct().getName() : i.getConcept(),
@@ -436,6 +442,6 @@ public class SaleService {
                 s.getCashRegister() != null ? s.getCashRegister().getId() : null,
                 s.getSaleDate(), s.getPaymentMethod(), s.getSubtotal(), s.getTax(), s.getTaxRate(), s.getTotal(), signedOf(s), s.isCredit(), s.getProjectId(),
                 s.getDeliveredAt(), s.getDeliveredTo(),
-                s.getStatus(), items);
+                s.getStatus(), items, s.getVoidedAt(), s.getVoidReason());
     }
 }

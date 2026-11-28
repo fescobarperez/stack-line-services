@@ -48,4 +48,7 @@ public interface JournalEntryLineRepository extends JpaRepository<JournalEntryLi
               AND (:periodId IS NULL OR l.entry.period.id = :periodId)
             ORDER BY l.entry.entryDate, l.entry.id""")
     List<LedgerLineRow> movementsForAccount(Long companyId, Long accountId, @Nullable Long periodId);
+
+    /** ¿La cuenta tiene movimientos? Entonces no se borra. */
+    boolean existsByAccountId(Long accountId);
 }

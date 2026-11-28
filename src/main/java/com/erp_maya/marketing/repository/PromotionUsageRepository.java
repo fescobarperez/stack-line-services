@@ -12,6 +12,9 @@ public interface PromotionUsageRepository extends JpaRepository<PromotionUsage, 
 
     List<PromotionUsage> findByCompanyId(Long companyId);
 
+    /** Al anular la venta, sus usos de promoción dejan de contar. */
+    void deleteByCompanyIdAndSaleId(Long companyId, Long saleId);
+
     /** [promotionId, usos, ahorroTotal, tickets] agregado por promoción. */
     @Query("SELECT u.promotionId, COUNT(u), COALESCE(SUM(u.amountSaved), 0), COUNT(DISTINCT u.saleId) "
             + "FROM PromotionUsage u WHERE u.companyId = :companyId GROUP BY u.promotionId")

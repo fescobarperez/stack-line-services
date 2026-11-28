@@ -1,5 +1,6 @@
 package com.erp_maya.security.service;
 
+import com.erp_maya.accounting.service.PostingDefaultsService;
 import com.erp_maya.company.domain.Company;
 import com.erp_maya.company.repository.CompanyRepository;
 import com.erp_maya.security.domain.Role;
@@ -32,6 +33,7 @@ public class DevDataSeeder {
     private final RoleRepository roles;
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
+    private final PostingDefaultsService postingDefaults;
 
     /**
      * Datos del primer acceso. Los valores por defecto son los de desarrollo de
@@ -49,6 +51,7 @@ public class DevDataSeeder {
 
     public DevDataSeeder(CompanyRepository companies, RoleRepository roles,
                          UserRepository users, PasswordEncoder passwordEncoder,
+                         PostingDefaultsService postingDefaults,
                          @Value("${erp.seed.company-code:TIENDA-DEMO}") String companyCode,
                          @Value("${erp.seed.company-name:Tienda Demo ERP MAYA}") String companyName,
                          @Value("${erp.seed.company-nit:1234567-8}") String companyNit,
@@ -63,6 +66,7 @@ public class DevDataSeeder {
         this.roles = roles;
         this.users = users;
         this.passwordEncoder = passwordEncoder;
+        this.postingDefaults = postingDefaults;
     }
 
     @EventListener
@@ -88,6 +92,8 @@ public class DevDataSeeder {
         company.setPlan("standard");
         company.setStatus("active");
         company = companies.save(company);
+        // Catálogo mínimo y plantillas de partidas: sin ellas no se puede vender.
+        postingDefaults.seed(company.getId());
 
         Role admin = new Role();
         admin.setCompanyId(company.getId());

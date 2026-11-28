@@ -78,6 +78,19 @@ public class FelDocument {
     @Column(name = "updated_at")
     private Instant updatedAt;
 
+    /** Anulación del DTE ante la SAT (simulada, como la certificación). */
+    @Column(name = "annulled_at")
+    private Instant annulledAt;
+
+    @Column(name = "annul_reason")
+    private String annulReason;
+
+    public Instant getAnnulledAt() { return annulledAt; }
+    public void setAnnulledAt(Instant annulledAt) { this.annulledAt = annulledAt; }
+
+    public String getAnnulReason() { return annulReason; }
+    public void setAnnulReason(String annulReason) { this.annulReason = annulReason; }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 

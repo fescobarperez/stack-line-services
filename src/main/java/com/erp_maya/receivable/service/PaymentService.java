@@ -1,6 +1,7 @@
 package com.erp_maya.receivable.service;
 
 import com.erp_maya.accounting.service.PostingService;
+import com.erp_maya.accounting.service.PostingCase;
 import com.erp_maya.bank.dto.BankDtos;
 import com.erp_maya.bank.service.BankService;
 import com.erp_maya.common.ResourceNotFoundException;
@@ -19,6 +20,7 @@ import jakarta.transaction.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Singleton
@@ -141,23 +143,31 @@ public class PaymentService {
     private void contabilizar(Payment p, String clientName, Long cashAccountId) {
         if (p.getAmount() == null || p.getAmount().signum() == 0) return;
 
-        // A dónde entró el dinero. El cheque se trata como caja: está en la
-        // gaveta hasta que alguien lo deposite.
-        String destino = p.getBankAccountId() != null ? "posting.bank" : "posting.cash";
         String ref = p.getReceiptNumber();
         String desc = "Cobro " + ref + " · " + clientName;
 
-        // Para caja/cheque el usuario pudo elegir una cuenta de caja concreta en
-        // el cobro; si la eligió, esa gana sobre la cuenta por defecto del rol.
-        // Una transferencia ya tiene su cuenta vía el banco, así que ahí no aplica.
-        Long debitAccountId = p.getBankAccountId() == null ? cashAccountId : null;
-        PostingService.Line debitLine = debitAccountId != null
-                ? PostingService.Line.debitAccount(destino, debitAccountId, p.getAmount(), desc, null)
-                : PostingService.Line.debit(destino, p.getAmount(), desc, null);
+        // La cuenta del documento: a dónde entró el dinero. Por banco, la
+        // cuenta contable de esa cuenta bancaria; en caja o cheque (el cheque
+        // está en la gaveta hasta que alguien lo deposite), la caja que el
+        // usuario eligió, o la de respaldo de la plantilla si no eligió ninguna.
+        Long documentAccountId = p.getBankAccountId() != null
+                ? cuentaContableDelBanco(p.getBankAccountId())
+                : cashAccountId;
 
-        posting.post("payment", p.getId(), p.getPaymentDate(), desc, ref, PostingService.lines(
-                debitLine,
-                PostingService.Line.credit("posting.receivable", p.getAmount(), desc, null)));
+        posting.postCase(PostingCase.CXC_COBRO, "payment", p.getId(), p.getPaymentDate(), desc, ref, clientName,
+                Map.of("monto", p.getAmount()), documentAccountId, null);
+    }
+
+    /**
+     * La cuenta contable de una cuenta bancaria. Si no tiene, la de la clave
+     * posting.bank; si tampoco hay, se detiene: un depósito contabilizado en
+     * caja descuadra la conciliación del banco sin que nadie lo note.
+     */
+    private Long cuentaContableDelBanco(Long bankAccountId) {
+        Long gl = banks.get(bankAccountId).glAccountId();
+        if (gl != null) return gl;
+        return posting.accountIdForKey("posting.bank").orElseThrow(() -> new IllegalStateException(
+                "La cuenta bancaria no tiene cuenta contable asignada. Asígnala en Bancos y Cuentas."));
     }
 
     /**

@@ -18,5 +18,6 @@ public final class FelDtos {
     public record Response(Long id, Long saleId, String dteType, String series, String number,
                            String uuid, String authorizationNumber, String receptorName, String receptorNit,
                            BigDecimal taxableAmount, BigDecimal exemptAmount, BigDecimal tax, BigDecimal total,
-                           String status, Instant issuedAt, Instant certifiedAt) {}
+                           String status, Instant issuedAt, Instant certifiedAt,
+                           Instant annulledAt, String annulReason) {}
 }

@@ -14,4 +14,10 @@ public interface JournalEntryRepository extends JpaRepository<JournalEntry, Long
     Page<JournalEntry> findByCompanyIdOrderByEntryDateDesc(Long companyId, Pageable pageable);
 
     Optional<JournalEntry> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** Las partidas que originó un documento (venta, cobro…). */
+    java.util.List<JournalEntry> findByCompanyIdAndSourceTypeAndSourceId(Long companyId, String sourceType, Long sourceId);
+
+    /** Una plantilla que ya generó partidas no se borra: se desactiva. */
+    boolean existsByTemplateId(Long templateId);
 }

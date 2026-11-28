@@ -143,6 +143,25 @@ public class Sale {
         this.items.add(item);
     }
 
+    /** Anulación: cuándo, por qué y quién. La venta queda en estado 'cancelled'. */
+    @Column(name = "voided_at")
+    private Instant voidedAt;
+
+    @Column(name = "void_reason")
+    private String voidReason;
+
+    @Column(name = "voided_by")
+    private Long voidedBy;
+
+    public Instant getVoidedAt() { return voidedAt; }
+    public void setVoidedAt(Instant voidedAt) { this.voidedAt = voidedAt; }
+
+    public String getVoidReason() { return voidReason; }
+    public void setVoidReason(String voidReason) { this.voidReason = voidReason; }
+
+    public Long getVoidedBy() { return voidedBy; }
+    public void setVoidedBy(Long voidedBy) { this.voidedBy = voidedBy; }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 

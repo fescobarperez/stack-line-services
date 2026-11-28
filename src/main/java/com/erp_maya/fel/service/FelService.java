@@ -56,6 +56,15 @@ public class FelService {
         subscription.checkFel(companyId);
         Sale sale = sales.findByIdAndCompanyId(req.saleId(), companyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Venta " + req.saleId() + " no encontrada"));
+        if ("cancelled".equalsIgnoreCase(sale.getStatus())) {
+            throw new IllegalStateException("La venta " + sale.getDocNumber() + " está anulada; no se certifica.");
+        }
+        // Un mismo documento certificado dos veces son dos facturas ante la SAT.
+        boolean yaCertificada = documents.findBySaleIdAndCompanyIdOrderByIdDesc(sale.getId(), companyId).stream()
+                .anyMatch(d -> "autorizado".equalsIgnoreCase(d.getStatus()));
+        if (yaCertificada) {
+            throw new IllegalStateException("La venta " + sale.getDocNumber() + " ya tiene un DTE certificado.");
+        }
 
         FelDocument dte = new FelDocument();
         dte.setCompanyId(companyId);
@@ -79,11 +88,29 @@ public class FelService {
         return toResponse(documents.save(dte));
     }
 
+    /**
+     * Anula ante la SAT los DTE vigentes de una venta. Simulado, igual que la
+     * certificación: cuando se integre el certificador real, aquí va su
+     * llamada de anulación.
+     */
+    @Transactional
+    public void anularDeVenta(Sale sale, String motivo) {
+        Long companyId = tenant.getCompanyId();
+        for (FelDocument d : documents.findBySaleIdAndCompanyIdOrderByIdDesc(sale.getId(), companyId)) {
+            if (!"autorizado".equalsIgnoreCase(d.getStatus())) continue;
+            d.setStatus("anulado");
+            d.setAnnulledAt(Instant.now());
+            d.setAnnulReason(motivo);
+            documents.update(d);
+        }
+    }
+
     private static FelDtos.Response toResponse(FelDocument d) {
         return new FelDtos.Response(d.getId(),
                 d.getSale() != null ? d.getSale().getId() : null,
                 d.getDteType(), d.getSeries(), d.getNumber(), d.getUuid(), d.getAuthorizationNumber(),
                 d.getReceptorName(), d.getReceptorNit(), d.getTaxableAmount(), d.getExemptAmount(),
-                d.getTax(), d.getTotal(), d.getStatus(), d.getIssuedAt(), d.getCertifiedAt());
+                d.getTax(), d.getTotal(), d.getStatus(), d.getIssuedAt(), d.getCertifiedAt(),
+                d.getAnnulledAt(), d.getAnnulReason());
     }
 }

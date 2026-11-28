@@ -1,5 +1,6 @@
 package com.erp_maya.platform.service;
 
+import com.erp_maya.accounting.service.PostingDefaultsService;
 import com.erp_maya.company.domain.Branch;
 import com.erp_maya.company.domain.Company;
 import com.erp_maya.company.domain.Establishment;
@@ -52,12 +53,15 @@ public class PlatformCompanyService {
     private final PlanRepository plans;
     private final SubscriptionService subscriptions;
     private final PlatformPlanService planService;
+    private final PostingDefaultsService postingDefaults;
 
     public PlatformCompanyService(CompanyRepository companies, EstablishmentRepository establishments,
                                   BranchRepository branches, RoleRepository roles, UserRepository users,
                                   CompanyStatusChangeRepository history, InvitationService invitations,
                                   CompanyStatusCache statusCache, PlanRepository plans,
-                                  SubscriptionService subscriptions, PlatformPlanService planService) {
+                                  SubscriptionService subscriptions, PlatformPlanService planService,
+                                  PostingDefaultsService postingDefaults) {
+        this.postingDefaults = postingDefaults;
         this.plans = plans;
         this.subscriptions = subscriptions;
         this.planService = planService;
@@ -152,6 +156,9 @@ public class PlatformCompanyService {
         company.setPlan(plan.getCode());
         company = companies.save(company);
         planService.createFor(company.getId(), plan, actor.name());
+        // Nace con catálogo mínimo y plantillas de partidas: sin ellas no puede
+        // registrar ni una venta (era el caso de las empresas creadas aquí).
+        postingDefaults.seed(company.getId());
 
         Establishment est = new Establishment();
         est.setCompanyId(company.getId());

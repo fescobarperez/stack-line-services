@@ -4,9 +4,13 @@ import com.erp_maya.accounting.domain.Account;
 import com.erp_maya.accounting.domain.AccountingPeriod;
 import com.erp_maya.accounting.domain.JournalEntry;
 import com.erp_maya.accounting.domain.JournalEntryLine;
+import com.erp_maya.accounting.domain.JournalTemplate;
+import com.erp_maya.accounting.domain.JournalTemplateLine;
+import com.erp_maya.accounting.domain.PostingRule;
 import com.erp_maya.accounting.repository.AccountRepository;
 import com.erp_maya.accounting.repository.AccountingPeriodRepository;
 import com.erp_maya.accounting.repository.JournalEntryRepository;
+import com.erp_maya.accounting.repository.PostingRuleRepository;
 import com.erp_maya.common.TenantContext;
 import com.erp_maya.settings.domain.CompanySetting;
 import com.erp_maya.settings.repository.CompanySettingRepository;
@@ -19,6 +23,8 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * El único lugar por donde nace una partida contable.
@@ -39,19 +45,20 @@ public class PostingService {
     private final AccountRepository accounts;
     private final AccountingPeriodRepository periods;
     private final CompanySettingRepository settings;
+    private final PostingRuleRepository rules;
     private final TenantContext tenant;
 
     public PostingService(JournalEntryRepository entries, AccountRepository accounts,
                           AccountingPeriodRepository periods, CompanySettingRepository settings,
-                          TenantContext tenant) {
+                          PostingRuleRepository rules, TenantContext tenant) {
         this.entries = entries;
         this.accounts = accounts;
         this.periods = periods;
         this.settings = settings;
+        this.rules = rules;
         this.tenant = tenant;
     }
 
-    /** Un renglón por escribir. `accountKey` es la clave del mapeo, no un código. */
     /**
      * Un renglón por escribir. Normalmente la cuenta se resuelve por
      * `accountKey` (la clave del mapeo). Si `accountId` viene informado, esa
@@ -85,6 +92,83 @@ public class PostingService {
     @Transactional
     public JournalEntry post(String sourceType, Long sourceId, LocalDate date,
                              String description, String reference, List<Line> lines) {
+        return write(sourceType, sourceId, date, description, reference, lines, null, null);
+    }
+
+    /**
+     * Registra la partida de un caso de uso con la plantilla que la empresa le
+     * asoció (Contabilidad → Partidas automáticas). Los módulos solo entregan sus
+     * montos; qué cuentas se mueven lo decide la plantilla.
+     *
+     * Sin plantilla asociada y activa, la operación se bloquea: una venta sin
+     * partida descuadra el libro en silencio, y eso es peor que detener la caja
+     * con un mensaje que dice qué configurar.
+     *
+     * @param documentAccountId la cuenta que el usuario eligió en el documento
+     *                          (caja o banco de un cobro); null si no aplica
+     * @param tercero           cliente o proveedor, para el texto de las líneas
+     */
+    @Transactional
+    public JournalEntry postCase(PostingCase useCase, String sourceType, Long sourceId, LocalDate date,
+                                 String description, String reference, String tercero,
+                                 Map<String, BigDecimal> amounts, Long documentAccountId, Long costCenterId) {
+        Long companyId = tenant.getCompanyId();
+        PostingRule rule = rules.findByCompanyIdAndUseCase(companyId, useCase.code())
+                .filter(r -> Boolean.TRUE.equals(r.getActive()))
+                .orElseThrow(() -> sinPlantilla(useCase));
+        JournalTemplate tpl = rule.getTemplate();
+        if (!Boolean.TRUE.equals(tpl.getActive()) || !useCase.code().equals(tpl.getUseCase())) {
+            throw sinPlantilla(useCase);
+        }
+
+        var ctx = new TemplateEvaluator.Context(amounts, documentAccountId, costCenterId,
+                description, reference, tercero);
+        List<Line> lines = TemplateEvaluator.evaluate(specsOf(tpl), ctx);
+
+        // Una plantilla que cuadra con el ejemplo puede no cuadrar con una
+        // operación real si alguien la cambió mal: se dice cuál y dónde.
+        BigDecimal diferencia = TemplateEvaluator.difference(lines);
+        if (diferencia.signum() != 0) {
+            throw new IllegalStateException(String.format(
+                    "La plantilla «%s» no cuadra para %s %s: diferencia %s. "
+                    + "Revísala en Contabilidad → Partidas automáticas → Plantillas de partidas.",
+                    tpl.getName(), useCase.label(), reference == null ? "" : reference,
+                    round(diferencia).toPlainString()));
+        }
+        return write(sourceType, sourceId, date, description, reference, lines, tpl.getId(), tpl.getVersion());
+    }
+
+    /** Las líneas de una plantilla, en el formato que evalúa {@link TemplateEvaluator}. */
+    public static List<TemplateEvaluator.LineSpec> specsOf(JournalTemplate tpl) {
+        List<TemplateEvaluator.LineSpec> out = new ArrayList<>();
+        for (JournalTemplateLine l : tpl.getLines()) {
+            out.add(new TemplateEvaluator.LineSpec(l.getSide(),
+                    l.getAccount() != null ? l.getAccount().getId() : null,
+                    Boolean.TRUE.equals(l.getUsesDocumentAccount()),
+                    l.amountKeys(), l.getDescription(),
+                    !Boolean.FALSE.equals(l.getUseCostCenter())));
+        }
+        return out;
+    }
+
+    /**
+     * La cuenta configurada en una clave posting.* de la empresa, si existe.
+     * Respaldo para documentos que no traen su cuenta (un banco sin cuenta
+     * contable asignada).
+     */
+    public Optional<Long> accountIdForKey(String key) {
+        return settings.findByCompanyIdAndSettingKey(tenant.getCompanyId(), key)
+                .map(CompanySetting::getSettingValue)
+                .map(Long::valueOf);
+    }
+
+    private static IllegalStateException sinPlantilla(PostingCase useCase) {
+        return new IllegalStateException("No hay plantilla de partida asociada a «" + useCase.label()
+                + "». Asóciala en Contabilidad → Partidas automáticas → Asociación con casos de uso.");
+    }
+
+    private JournalEntry write(String sourceType, Long sourceId, LocalDate date, String description,
+                               String reference, List<Line> lines, Long templateId, Integer templateVersion) {
         Long companyId = tenant.getCompanyId();
 
         // Las líneas en cero no se escriben: una venta exenta no debe dejar un
@@ -102,6 +186,8 @@ public class PostingService {
         entry.setReference(reference);
         entry.setSourceType(sourceType);
         entry.setSourceId(sourceId);
+        entry.setTemplateId(templateId);
+        entry.setTemplateVersion(templateVersion);
         entry.setPeriod(periodFor(entry.getEntryDate(), companyId));
 
         BigDecimal debit = BigDecimal.ZERO;
@@ -197,7 +283,7 @@ public class PostingService {
                 .map(CompanySetting::getSettingValue)
                 .orElseThrow(() -> new IllegalStateException(
                         "No hay cuenta contable configurada para '" + key
-                        + "'. Revísala en Contabilidad → Configuración."));
+                        + "'. Revisa Contabilidad → Partidas automáticas."));
         return accounts.findById(Long.valueOf(id))
                 .filter(a -> a.getCompanyId().equals(companyId))
                 .orElseThrow(() -> new IllegalStateException(

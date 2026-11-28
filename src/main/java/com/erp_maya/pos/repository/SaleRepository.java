@@ -17,6 +17,9 @@ public interface SaleRepository extends JpaRepository<Sale, Long> {
 
     Optional<Sale> findByIdAndCompanyId(Long id, Long companyId);
 
+    /** Notas de crédito vigentes que apuntan a una venta. */
+    boolean existsByCompanyIdAndRelatedSaleIdAndStatusNot(Long companyId, Long relatedSaleId, String status);
+
     /** Ventas emitidas contra un proyecto: base del facturado. */
     java.util.List<Sale> findByCompanyIdAndProjectId(Long companyId, Long projectId);
 

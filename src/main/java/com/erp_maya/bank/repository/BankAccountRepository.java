@@ -13,4 +13,7 @@ public interface BankAccountRepository extends JpaRepository<BankAccount, Long> 
     List<BankAccount> findByCompanyId(Long companyId);
 
     Optional<BankAccount> findByIdAndCompanyId(Long id, Long companyId);
+
+    /** ¿Alguna cuenta bancaria usa esta cuenta contable? */
+    boolean existsByGlAccountId(Long glAccountId);
 }

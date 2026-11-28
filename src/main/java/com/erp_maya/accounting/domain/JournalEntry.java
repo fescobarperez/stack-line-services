@@ -63,6 +63,19 @@ public class JournalEntry {
     public Long getReversesEntryId() { return reversesEntryId; }
     public void setReversesEntryId(Long reversesEntryId) { this.reversesEntryId = reversesEntryId; }
 
+    /** Plantilla y versión con que nació la partida automática (auditoría). */
+    @Column(name = "template_id")
+    private Long templateId;
+
+    @Column(name = "template_version")
+    private Integer templateVersion;
+
+    public Long getTemplateId() { return templateId; }
+    public void setTemplateId(Long templateId) { this.templateId = templateId; }
+
+    public Integer getTemplateVersion() { return templateVersion; }
+    public void setTemplateVersion(Integer templateVersion) { this.templateVersion = templateVersion; }
+
     @Column(name = "total_debit")
     private BigDecimal totalDebit = BigDecimal.ZERO;
 

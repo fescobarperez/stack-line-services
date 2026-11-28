@@ -4,6 +4,7 @@ import com.erp_maya.common.ResourceNotFoundException;
 import com.erp_maya.common.TenantContext;
 import com.erp_maya.sequence.service.DocumentSequenceService;
 import com.erp_maya.accounting.service.PostingService;
+import com.erp_maya.accounting.service.PostingCase;
 import com.erp_maya.authorization.dto.AuthorizationDtos;
 import com.erp_maya.authorization.service.AuthorizationService;
 import com.erp_maya.catalog.domain.Product;
@@ -43,6 +44,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Proyectos y su rentabilidad.
@@ -230,13 +232,10 @@ public class ProjectService {
         //
         // Va al costo del proyecto vía su centro de costo, que es lo que
         // permite filtrar el gasto por obra en los reportes contables.
-        posting.post("project_consumption", movement.getId(), LocalDate.now(),
-                "Consumo " + product.getName() + " · " + p.getCode(), p.getCode(),
-                PostingService.lines(
-                        PostingService.Line.debit("posting.cost_of_sales", amount,
-                                product.getName() + " × " + req.quantity(), p.getCostCenterId()),
-                        PostingService.Line.credit("posting.inventory", amount,
-                                product.getName(), p.getCostCenterId())));
+        posting.postCase(PostingCase.PROYECTO_CONSUMO, "project_consumption", movement.getId(), LocalDate.now(),
+                "Consumo " + product.getName() + " × " + req.quantity().stripTrailingZeros().toPlainString()
+                        + " · " + p.getCode(),
+                p.getCode(), null, Map.of("costo", amount), null, p.getCostCenterId());
 
         ProjectCost c = new ProjectCost();
         c.setCompanyId(companyId);
